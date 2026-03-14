@@ -1,10 +1,13 @@
-const CACHE_NAME = "ultra-route-sniper-shell-v4";
+const CACHE_NAME = "ultra-route-sniper-shell-v5";
 const ASSETS = [
   "./",
   "./index.html",
+  "./donate.html",
   "./styles.css",
   "./app.js",
-  "./manifest.json"
+  "./manifest.json",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
