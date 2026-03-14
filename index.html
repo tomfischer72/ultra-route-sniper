@@ -31,57 +31,66 @@
   <body>
     <div id="app">
       <header class="app-header">
-        <h1>Ultra Route Sniper</h1>
-        <p class="subtitle">Offline PWA · GPX · Sniper-Mode</p>
+        <h1 data-i18n="app.title">Ultra Route Sniper</h1>
+        <p class="subtitle" data-i18n="app.subtitle">Offline PWA · GPX · Sniper-Mode</p>
+        <label class="lang-switch">
+          <span data-i18n="app.languageLabel">Sprache</span>
+          <select id="language-select" aria-label="Language">
+            <option value="de">DE</option>
+            <option value="en">EN</option>
+            <option value="fr">FR</option>
+            <option value="it">IT</option>
+          </select>
+        </label>
       </header>
 
       <main>
         <section class="card">
-          <h2>1. GPX-Strecke laden</h2>
-          <p class="hint">
+          <h2 data-i18n="upload.title">1. GPX-Strecke laden</h2>
+          <p class="hint" data-i18n="upload.hint">
             Einmal deine Renn-GPX-Datei laden, dann bleibt sie lokal gespeichert
             (offline nutzbar).
           </p>
           <label class="file-input-label">
             <input id="gpx-file-input" type="file" accept=".gpx,application/gpx+xml" />
-            <span>Datei wählen</span>
+            <span data-i18n="upload.chooseFile">Datei wählen</span>
           </label>
           <button id="use-stored-gpx-btn" class="btn secondary" disabled>
-            Gespeicherte Strecke nutzen
+            <span data-i18n="upload.useStored">Gespeicherte Strecke nutzen</span>
           </button>
           <div id="gpx-status" class="status-text"></div>
         </section>
 
         <section class="card">
-          <h2>2. Ortung</h2>
-          <p class="hint">
+          <h2 data-i18n="location.title">2. Ortung</h2>
+          <p class="hint" data-i18n="location.hint">
             Großer Button = aktuelle Position bestimmen (HTML5 Geolocation).
           </p>
           <button id="locate-btn" class="btn primary big">
-            Ortung starten
+            <span data-i18n="location.startButton">Ortung starten</span>
           </button>
           <div id="location-status" class="status-text"></div>
           <div id="route-position" class="status-text"></div>
         </section>
 
         <section class="card">
-          <h2>3. Sniper-Modus</h2>
-          <p class="hint">
+          <h2 data-i18n="sniper.title">3. Sniper-Modus</h2>
+          <p class="hint" data-i18n="sniper.hint">
             Scannt die nächsten Kilometer entlang der Route nach Unterkünften, Tankstellen &amp; Versorgungsstellen.
           </p>
           <div class="range-mode" aria-label="Suchmodus">
             <button class="chip active" data-range-mode="plan">
-              Planung (ab km 0)
+              <span data-i18n="sniper.modePlan">Planung (ab km 0)</span>
             </button>
             <button class="chip" data-range-mode="live">
-              Unterwegs (ab jetzt)
+              <span data-i18n="sniper.modeLive">Unterwegs (ab jetzt)</span>
             </button>
           </div>
-          <p id="range-mode-hint" class="hint compact">
+          <p id="range-mode-hint" class="hint compact" data-i18n="sniper.modePlanHint">
             Planung: Suchfenster relativ zum Routenstart.
           </p>
           <label class="range-label">
-            Nächste Kilometer entlang der Route:
+            <span data-i18n="sniper.windowLabel">Nächste Kilometer entlang der Route:</span>
             <div class="range-row">
               <input
                 id="range-start"
@@ -104,7 +113,7 @@
             </div>
           </label>
           <label class="range-label">
-            Korridorbreite seitlich der Route:
+            <span data-i18n="sniper.corridorLabel">Korridorbreite seitlich der Route:</span>
             <div class="range-row">
               <input
                 id="corridor-width"
@@ -115,26 +124,26 @@
                 value="2"
                 inputmode="numeric"
               />
-              <span>km (1–10)</span>
+              <span data-i18n="sniper.corridorRange">km (1–10)</span>
             </div>
           </label>
           <button id="sniper-btn" class="btn secondary big" disabled>
-            POI-Scan starten
+            <span data-i18n="sniper.scanButton">POI-Scan starten</span>
           </button>
-          <p class="filter-title">POI-Filter (antippen zum Ein/Ausblenden):</p>
+          <p class="filter-title" data-i18n="sniper.filterTitle">POI-Filter (antippen zum Ein/Ausblenden):</p>
           <div class="poi-filters" aria-label="POI-Filter">
-            <button class="chip active" data-poi-filter="lodging">Unterkunft</button>
-            <button class="chip active" data-poi-filter="fuel">Tankstelle</button>
-            <button class="chip active" data-poi-filter="grocery">Shop</button>
-            <button class="chip active" data-poi-filter="restaurant">Restaurant</button>
-            <button class="chip active" data-poi-filter="cafe">Cafe/Baeckerei</button>
-            <button class="chip active" data-poi-filter="fastfood">Fast Food</button>
-            <button class="chip active" data-poi-filter="water">Wasser</button>
-            <button class="chip active" data-poi-filter="camping">Camping</button>
-            <button class="chip active" data-poi-filter="shelter">Shelter</button>
+            <button class="chip active" data-poi-filter="lodging" data-i18n="poi.lodging">Unterkunft</button>
+            <button class="chip active" data-poi-filter="fuel" data-i18n="poi.fuel">Tankstelle</button>
+            <button class="chip active" data-poi-filter="grocery" data-i18n="poi.grocery">Shop</button>
+            <button class="chip active" data-poi-filter="restaurant" data-i18n="poi.restaurant">Restaurant</button>
+            <button class="chip active" data-poi-filter="cafe" data-i18n="poi.cafe">Cafe/Baeckerei</button>
+            <button class="chip active" data-poi-filter="fastfood" data-i18n="poi.fastfood">Fast Food</button>
+            <button class="chip active" data-poi-filter="water" data-i18n="poi.water">Wasser</button>
+            <button class="chip active" data-poi-filter="camping" data-i18n="poi.camping">Camping</button>
+            <button class="chip active" data-poi-filter="shelter" data-i18n="poi.shelter">Shelter</button>
           </div>
           <button id="show-map-btn" class="btn secondary big" disabled>
-            In Karte zeigen
+            <span data-i18n="sniper.showMapButton">In Karte zeigen</span>
           </button>
           <div id="sniper-status" class="status-text"></div>
           <ul id="poi-list" class="poi-list"></ul>
@@ -144,12 +153,12 @@
 
     <section id="map-view" class="map-view hidden" aria-hidden="true">
       <div class="map-header">
-        <button id="back-to-list-btn" class="btn secondary">Zur Liste</button>
+        <button id="back-to-list-btn" class="btn secondary"><span data-i18n="map.backToList">Zur Liste</span></button>
         <label class="map-toggle">
           <input id="unpaved-toggle" type="checkbox" checked />
-          <span>Unbefestigt</span>
+          <span data-i18n="map.unpavedToggle">Unbefestigt</span>
         </label>
-        <p id="map-view-title" class="map-title">Kartenansicht</p>
+        <p id="map-view-title" class="map-title" data-i18n="map.title">Kartenansicht</p>
         <p id="map-status" class="map-status"></p>
       </div>
       <div id="map-container" class="map-container"></div>
