@@ -7,7 +7,10 @@ const OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter";
 const DEFAULT_POI_FILTERS = [
   "lodging",
   "fuel",
-  "food",
+  "grocery",
+  "restaurant",
+  "cafe",
+  "fastfood",
   "water",
   "camping",
   "shelter",
@@ -18,6 +21,74 @@ let routePoints = []; // { lat, lon, cumDistKm }
 let lastGeoPosition = null; // { lat, lon }
 let lastRouteMatch = null; // { kmOnRoute, distanceToRouteKm }
 let activePoiFilters = new Set(DEFAULT_POI_FILTERS);
+let lastScanResults = [];
+let lastScanSegmentPoints = [];
+let lastScanRange = null; // { startKmAhead, endKmAhead, corridorWidthKm }
+let mapInstance = null;
+let mapRouteLayer = null;
+let mapRouteCasingLayer = null;
+let mapUnpavedLayer = null;
+let mapPoiLayer = null;
+let mapStartEndLayer = null;
+let mapPoiMarkerByKey = new Map();
+let mapTileLayer = null;
+let mapBaseLayers = null;
+let mapLegendControl = null;
+let currentTileProviderName = "OpenStreetMap";
+let tileErrorCount = 0;
+let hasSwitchedTileProvider = false;
+let surfaceAnalysisToken = 0;
+const surfaceOverlayCache = new Map();
+let showUnpavedOverlay = true;
+
+const POI_CATEGORY_COLORS = {
+  lodging: "#3b82f6",
+  fuel: "#f59e0b",
+  grocery: "#ef4444",
+  restaurant: "#dc2626",
+  cafe: "#d97706",
+  fastfood: "#b91c1c",
+  water: "#06b6d4",
+  camping: "#22c55e",
+  shelter: "#a855f7",
+  other: "#9ca3af",
+};
+
+const UNPAVED_SURFACE_COLOR = "#f97316";
+const UNPAVED_SURFACES = new Set([
+  "unpaved",
+  "gravel",
+  "fine_gravel",
+  "compacted",
+  "dirt",
+  "ground",
+  "earth",
+  "mud",
+  "sand",
+  "grass",
+  "grass_paver",
+  "pebblestone",
+  "woodchips",
+]);
+
+const TILE_PROVIDERS = {
+  OpenStreetMap: {
+    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    options: {
+      maxZoom: 19,
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+    },
+  },
+  CartoLight: {
+    url: "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+    options: {
+      maxZoom: 20,
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; CARTO',
+    },
+  },
+};
 
 document.addEventListener("DOMContentLoaded", () => {
   initUI();
@@ -39,6 +110,9 @@ function initUI() {
   const useStoredBtn = document.getElementById("use-stored-gpx-btn");
   const locateBtn = document.getElementById("locate-btn");
   const sniperBtn = document.getElementById("sniper-btn");
+  const showMapBtn = document.getElementById("show-map-btn");
+  const backToListBtn = document.getElementById("back-to-list-btn");
+  const unpavedToggle = document.getElementById("unpaved-toggle");
   const filterContainer = document.querySelector(".poi-filters");
 
   gpxInput.addEventListener("change", handleGpxFileSelect);
@@ -49,6 +123,19 @@ function initUI() {
   locateBtn.addEventListener("click", handleLocateClick);
 
   sniperBtn.addEventListener("click", handleSniperClick);
+  showMapBtn.addEventListener("click", handleShowMapClick);
+  backToListBtn.addEventListener("click", () => toggleMapView(false));
+  if (unpavedToggle) {
+    unpavedToggle.checked = showUnpavedOverlay;
+    unpavedToggle.addEventListener("change", (event) => {
+      showUnpavedOverlay = !!event.target.checked;
+      if (showUnpavedOverlay && !mapUnpavedLayer && lastScanSegmentPoints.length) {
+        updateUnpavedOverlay(getRenderableRouteLatLngs());
+      } else {
+        applyUnpavedVisibility();
+      }
+    });
+  }
 
   if (filterContainer) {
     filterContainer.addEventListener("click", handleFilterClick);
@@ -97,6 +184,8 @@ function handleFilterClick(event) {
       : `Aktive Kategorien: ${Array.from(activePoiFilters).join(", ")}`;
 
   setStatus("sniper-status", filterInfo, "info");
+  // Bereits gescannte Ergebnisse sind nach Filterwechsel ggf. veraltet.
+  document.getElementById("show-map-btn").disabled = true;
   updateSniperButtonState();
 }
 
@@ -468,6 +557,7 @@ async function handleSniperClick() {
   const rangeStartInput = document.getElementById("range-start");
   const rangeEndInput = document.getElementById("range-end");
   const poiList = document.getElementById("poi-list");
+  const showMapBtn = document.getElementById("show-map-btn");
 
   const startKmAhead = Number(rangeStartInput.value || 0);
   const endKmAhead = Number(rangeEndInput.value || 0);
@@ -519,6 +609,7 @@ async function handleSniperClick() {
   }
 
   poiList.innerHTML = "";
+  showMapBtn.disabled = true;
   setStatus(
     "sniper-status",
     `Scanne Strecke von km ${segmentStartKm.toFixed(1)} bis ${segmentEndKm.toFixed(1)} …`,
@@ -568,6 +659,10 @@ async function handleSniperClick() {
       )
       .sort((a, b) => a.distanceAheadKm - b.distanceAheadKm);
 
+    lastScanResults = filtered;
+    lastScanSegmentPoints = segmentPoints;
+    lastScanRange = { startKmAhead, endKmAhead, corridorWidthKm };
+
     renderPoiList(filtered);
 
     if (!filtered.length) {
@@ -576,12 +671,14 @@ async function handleSniperClick() {
         "Keine passenden POIs im gewählten Korridor gefunden.",
         "info",
       );
+      showMapBtn.disabled = true;
     } else {
       setStatus(
         "sniper-status",
         `${filtered.length} Orte im Korridor gefunden.`,
         "info",
       );
+      showMapBtn.disabled = false;
     }
   } catch (err) {
     console.error(err);
@@ -627,13 +724,14 @@ async function fetchOverpassPois(bbox) {
       // Tankstellen
       node["amenity"="fuel"](${minLat},${minLon},${maxLat},${maxLon});
 
-      // Lebensmittel / Shops
+      // Versorgung: Shops, Restaurants, Cafes
       node["shop"="supermarket"](${minLat},${minLon},${maxLat},${maxLon});
       node["shop"="convenience"](${minLat},${minLon},${maxLat},${maxLon});
       node["shop"="grocery"](${minLat},${minLon},${maxLat},${maxLon});
+      node["amenity"="restaurant"](${minLat},${minLon},${maxLat},${maxLon});
+      node["amenity"="cafe"](${minLat},${minLon},${maxLat},${maxLon});
       node["shop"="bakery"](${minLat},${minLon},${maxLat},${maxLon});
       node["amenity"="fast_food"](${minLat},${minLon},${maxLat},${maxLon});
-      node["amenity"="restaurant"](${minLat},${minLon},${maxLat},${maxLon});
 
       // Wasser
       node["amenity"="drinking_water"](${minLat},${minLon},${maxLat},${maxLon});
@@ -705,13 +803,19 @@ async function fetchOverpassPois(bbox) {
       } else if (
         tags.shop === "supermarket" ||
         tags.shop === "convenience" ||
-        tags.shop === "grocery" ||
-        tags.shop === "bakery" ||
-        tags.amenity === "fast_food" ||
-        tags.amenity === "restaurant"
+        tags.shop === "grocery"
       ) {
-        category = "food";
-        typeLabel = "Lebensmittel";
+        category = "grocery";
+        typeLabel = "Shop";
+      } else if (tags.amenity === "restaurant") {
+        category = "restaurant";
+        typeLabel = "Restaurant";
+      } else if (tags.amenity === "cafe" || tags.shop === "bakery") {
+        category = "cafe";
+        typeLabel = "Cafe/Baeckerei";
+      } else if (tags.amenity === "fast_food") {
+        category = "fastfood";
+        typeLabel = "Fast Food";
       } else if (
         tags.amenity === "drinking_water" ||
         tags.amenity === "fountain"
@@ -801,8 +905,14 @@ function renderPoiList(pois) {
 
     mapsLink.appendChild(mapsBtn);
 
+    const mapViewBtn = document.createElement("button");
+    mapViewBtn.className = "btn secondary poi-action-btn";
+    mapViewBtn.textContent = "Auf Karte";
+    mapViewBtn.addEventListener("click", () => showPoiOnMapFromList(poi));
+
     actions.appendChild(callLink);
     actions.appendChild(mapsLink);
+    actions.appendChild(mapViewBtn);
 
     li.appendChild(mainLine);
     li.appendChild(actions);
@@ -811,13 +921,581 @@ function renderPoiList(pois) {
   });
 }
 
+// ---------- MAP VIEW ----------
+
+function toggleMapView(show) {
+  const mapView = document.getElementById("map-view");
+  if (!mapView) return;
+
+  mapView.classList.toggle("hidden", !show);
+  mapView.setAttribute("aria-hidden", show ? "false" : "true");
+}
+
+function handleShowMapClick() {
+  if (!lastScanResults.length || !lastScanSegmentPoints.length) {
+    setStatus(
+      "sniper-status",
+      "Keine Scan-Daten vorhanden. Bitte zuerst einen POI-Scan starten.",
+      "error",
+    );
+    return;
+  }
+
+  if (typeof L === "undefined") {
+    setStatus(
+      "sniper-status",
+      "Karte konnte nicht geladen werden (Leaflet nicht verfügbar).",
+      "error",
+    );
+    return;
+  }
+
+  toggleMapView(true);
+  renderMapForLastScan();
+}
+
+function showPoiOnMapFromList(poi) {
+  if (!lastScanResults.length || !lastScanSegmentPoints.length) {
+    setStatus(
+      "sniper-status",
+      "Bitte zuerst einen POI-Scan starten.",
+      "error",
+    );
+    return;
+  }
+
+  toggleMapView(true);
+  renderMapForLastScan();
+
+  const marker = mapPoiMarkerByKey.get(getPoiKey(poi));
+  if (!marker || !mapInstance) return;
+
+  mapInstance.setView(marker.getLatLng(), Math.max(mapInstance.getZoom(), 13), {
+    animate: true,
+  });
+  marker.openPopup();
+}
+
+function renderMapForLastScan() {
+  const mapContainer = document.getElementById("map-container");
+  const mapTitle = document.getElementById("map-view-title");
+  if (!mapContainer) return;
+
+  if (!mapInstance) {
+    mapInstance = L.map("map-container", {
+      zoomControl: true,
+      preferCanvas: true,
+    });
+    initMapBaseLayers();
+  }
+
+  if (mapRouteLayer) mapInstance.removeLayer(mapRouteLayer);
+  if (mapRouteCasingLayer) mapInstance.removeLayer(mapRouteCasingLayer);
+  if (mapUnpavedLayer) mapInstance.removeLayer(mapUnpavedLayer);
+  if (mapPoiLayer) mapInstance.removeLayer(mapPoiLayer);
+  if (mapStartEndLayer) mapInstance.removeLayer(mapStartEndLayer);
+  mapPoiMarkerByKey = new Map();
+
+  const routeLatLngs = getRenderableRouteLatLngs();
+  mapRouteCasingLayer = L.polyline(routeLatLngs, {
+    color: "#052e16",
+    weight: 8,
+    opacity: 0.95,
+  }).addTo(mapInstance);
+
+  mapRouteLayer = L.polyline(routeLatLngs, {
+    color: "#22c55e",
+    weight: 5,
+    opacity: 1,
+  }).addTo(mapInstance);
+
+  const start = routeLatLngs[0];
+  const end = routeLatLngs[routeLatLngs.length - 1];
+  mapStartEndLayer = L.layerGroup([
+    L.circleMarker(start, {
+      radius: 7,
+      color: "#22c55e",
+      fillColor: "#22c55e",
+      fillOpacity: 1,
+      weight: 2,
+    }).bindTooltip("Start Suchfenster"),
+    L.circleMarker(end, {
+      radius: 7,
+      color: "#ef4444",
+      fillColor: "#ef4444",
+      fillOpacity: 1,
+      weight: 2,
+    }).bindTooltip("Ende Suchfenster"),
+  ]).addTo(mapInstance);
+
+  mapPoiLayer = L.layerGroup();
+  lastScanResults.forEach((poi) => {
+    const poiKey = getPoiKey(poi);
+    const color = POI_CATEGORY_COLORS[poi.category] || POI_CATEGORY_COLORS.other;
+    const marker = L.circleMarker([poi.lat, poi.lon], {
+      radius: 7,
+      color,
+      fillColor: color,
+      fillOpacity: 0.95,
+      weight: 2,
+    });
+
+    marker.bindPopup(buildPoiPopupHtml(poi), {
+      autoPan: true,
+      closeButton: true,
+    });
+    mapPoiMarkerByKey.set(poiKey, marker);
+    mapPoiLayer.addLayer(marker);
+  });
+  mapPoiLayer.addTo(mapInstance);
+  addOrUpdateMapLegend();
+  updateUnpavedOverlay(routeLatLngs);
+
+  // Robust bounds calculation (LayerGroup cannot be passed directly to FeatureGroup bounds).
+  const bounds = L.latLngBounds(routeLatLngs);
+  mapStartEndLayer.eachLayer((layer) => {
+    if (typeof layer.getLatLng === "function") {
+      bounds.extend(layer.getLatLng());
+    }
+  });
+  mapPoiLayer.eachLayer((layer) => {
+    if (typeof layer.getLatLng === "function") {
+      bounds.extend(layer.getLatLng());
+    }
+  });
+
+  if (bounds.isValid()) {
+    mapInstance.fitBounds(bounds, { padding: [24, 24] });
+  } else if (routeLatLngs.length) {
+    mapInstance.setView(routeLatLngs[0], 12);
+  }
+  setMapStatus(
+    `Basemap: ${currentTileProviderName} | Routepunkte: ${routeLatLngs.length} | POIs: ${lastScanResults.length}`,
+  );
+
+  // Desktop-Browser reagieren teils träge nach Overlay-Wechsel.
+  requestAnimationFrame(() => {
+    mapInstance.invalidateSize();
+    setTimeout(() => mapInstance.invalidateSize(), 180);
+  });
+
+  if (mapTitle && lastScanRange) {
+    mapTitle.textContent = `Korridor ${lastScanRange.startKmAhead}-${lastScanRange.endKmAhead} km | Breite ${lastScanRange.corridorWidthKm} km`;
+  }
+}
+
+function initMapBaseLayers() {
+  mapBaseLayers = {};
+  Object.entries(TILE_PROVIDERS).forEach(([name, provider]) => {
+    mapBaseLayers[name] = L.tileLayer(provider.url, provider.options);
+  });
+
+  mapTileLayer = mapBaseLayers[currentTileProviderName];
+  mapTileLayer.addTo(mapInstance);
+  attachTileErrorHandling(mapTileLayer);
+
+  L.control.layers(mapBaseLayers, null, { collapsed: true }).addTo(mapInstance);
+}
+
+function addOrUpdateMapLegend() {
+  if (!mapInstance) return;
+  if (mapLegendControl) {
+    mapInstance.removeControl(mapLegendControl);
+  }
+
+  mapLegendControl = L.control({ position: "bottomright" });
+  mapLegendControl.onAdd = () => {
+    const div = L.DomUtil.create("div", "map-legend");
+    const items = [
+      ["Route", "#22c55e"],
+      ["Unbefestigt", UNPAVED_SURFACE_COLOR],
+      ["Unterkunft", POI_CATEGORY_COLORS.lodging],
+      ["Tankstelle", POI_CATEGORY_COLORS.fuel],
+      ["Shop", POI_CATEGORY_COLORS.grocery],
+      ["Restaurant", POI_CATEGORY_COLORS.restaurant],
+      ["Cafe/Baeckerei", POI_CATEGORY_COLORS.cafe],
+      ["Fast Food", POI_CATEGORY_COLORS.fastfood],
+      ["Wasser", POI_CATEGORY_COLORS.water],
+      ["Camping", POI_CATEGORY_COLORS.camping],
+      ["Shelter", POI_CATEGORY_COLORS.shelter],
+    ];
+
+    div.innerHTML = items
+      .map(
+        ([label, color]) =>
+          `<div class="legend-row"><span class="legend-swatch" style="background:${color}"></span>${label}</div>`,
+      )
+      .join("");
+    return div;
+  };
+  mapLegendControl.addTo(mapInstance);
+}
+
+async function updateUnpavedOverlay(routeLatLngs) {
+  if (!mapInstance || routeLatLngs.length < 2) return;
+  if (!showUnpavedOverlay) {
+    applyUnpavedVisibility();
+    return;
+  }
+
+  const cacheKey = getSurfaceCacheKey(routeLatLngs);
+  if (surfaceOverlayCache.has(cacheKey)) {
+    const cached = surfaceOverlayCache.get(cacheKey);
+    drawUnpavedOverlay(cached.polylines);
+    if (cached.km > 0) {
+      setMapStatus(
+        `Basemap: ${currentTileProviderName} | Unbefestigt ~${cached.km.toFixed(1)} km`,
+      );
+    }
+    return;
+  }
+
+  const token = ++surfaceAnalysisToken;
+  setMapStatus(`Basemap: ${currentTileProviderName} | analysiere Untergrund ...`);
+
+  try {
+    const ways = await fetchSurfaceWays(routeLatLngs);
+    if (token !== surfaceAnalysisToken) return;
+
+    const unpavedPolylines = detectUnpavedPolylines(routeLatLngs, ways);
+    const unpavedKm = estimatePolylineKm(unpavedPolylines);
+
+    surfaceOverlayCache.set(cacheKey, {
+      polylines: unpavedPolylines,
+      km: unpavedKm,
+    });
+    drawUnpavedOverlay(unpavedPolylines);
+
+    setMapStatus(
+      `Basemap: ${currentTileProviderName} | Unbefestigt ~${unpavedKm.toFixed(1)} km`,
+    );
+  } catch (err) {
+    if (token !== surfaceAnalysisToken) return;
+    console.warn("Surface analysis failed", err);
+    setMapStatus(
+      `Basemap: ${currentTileProviderName} | Untergrund-Analyse nicht verfügbar`,
+    );
+  }
+}
+
+function drawUnpavedOverlay(polylines) {
+  if (mapUnpavedLayer) {
+    mapInstance.removeLayer(mapUnpavedLayer);
+  }
+  mapUnpavedLayer = L.layerGroup();
+  polylines.forEach((line) => {
+    if (line.length < 2) return;
+    L.polyline(line, {
+      color: UNPAVED_SURFACE_COLOR,
+      weight: 6,
+      opacity: 0.95,
+      lineCap: "round",
+      lineJoin: "round",
+      dashArray: "10 8",
+    }).addTo(mapUnpavedLayer);
+  });
+  applyUnpavedVisibility();
+}
+
+function applyUnpavedVisibility() {
+  if (!mapInstance) return;
+  if (!mapUnpavedLayer) {
+    if (!showUnpavedOverlay) {
+      setMapStatus(`Basemap: ${currentTileProviderName} | Unbefestigt ausgeblendet`);
+    }
+    return;
+  }
+
+  if (showUnpavedOverlay) {
+    if (!mapInstance.hasLayer(mapUnpavedLayer)) {
+      mapUnpavedLayer.addTo(mapInstance);
+    }
+    setMapStatus(`Basemap: ${currentTileProviderName} | Unbefestigt eingeblendet`);
+  } else if (mapInstance.hasLayer(mapUnpavedLayer)) {
+    mapInstance.removeLayer(mapUnpavedLayer);
+    setMapStatus(`Basemap: ${currentTileProviderName} | Unbefestigt ausgeblendet`);
+  }
+}
+
+function getSurfaceCacheKey(routeLatLngs) {
+  const first = routeLatLngs[0];
+  const last = routeLatLngs[routeLatLngs.length - 1];
+  return `${routeLatLngs.length}|${first[0].toFixed(4)},${first[1].toFixed(4)}|${last[0].toFixed(4)},${last[1].toFixed(4)}`;
+}
+
+async function fetchSurfaceWays(routeLatLngs) {
+  const bbox = computeLatLngBoundingBox(routeLatLngs, 0.02);
+  const query = `
+    [out:json][timeout:30];
+    way["highway"](${bbox.minLat},${bbox.minLon},${bbox.maxLat},${bbox.maxLon});
+    out tags geom;
+  `;
+
+  const response = await fetch(OVERPASS_ENDPOINT, {
+    method: "POST",
+    body: query,
+    headers: {
+      "Content-Type": "text/plain;charset=UTF-8",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Overpass surface error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  if (!data.elements) return [];
+  return data.elements.filter(
+    (el) =>
+      el.type === "way" &&
+      Array.isArray(el.geometry) &&
+      el.geometry.length > 1,
+  );
+}
+
+function detectUnpavedPolylines(routeLatLngs, ways) {
+  if (!ways.length || routeLatLngs.length < 2) return [];
+
+  const vertexIndex = buildWayVertexIndex(ways);
+  if (!vertexIndex.size) return [];
+
+  const sampleStep = Math.max(1, Math.floor(routeLatLngs.length / 900));
+  const sampled = [];
+  for (let i = 0; i < routeLatLngs.length; i += sampleStep) {
+    sampled.push(routeLatLngs[i]);
+  }
+  const lastPt = routeLatLngs[routeLatLngs.length - 1];
+  const lastSample = sampled[sampled.length - 1];
+  if (!lastSample || lastSample[0] !== lastPt[0] || lastSample[1] !== lastPt[1]) {
+    sampled.push(lastPt);
+  }
+
+  const flags = sampled.map(([lat, lon]) =>
+    isNearUnpavedWay(lat, lon, vertexIndex),
+  );
+
+  const polylines = [];
+  let current = [];
+  for (let i = 0; i < sampled.length; i += 1) {
+    if (flags[i]) {
+      current.push(sampled[i]);
+    } else if (current.length > 1) {
+      polylines.push(current);
+      current = [];
+    } else {
+      current = [];
+    }
+  }
+  if (current.length > 1) {
+    polylines.push(current);
+  }
+
+  return polylines;
+}
+
+function buildWayVertexIndex(ways) {
+  const index = new Map();
+  const cellSize = 0.02;
+
+  ways.forEach((way) => {
+    const unpaved = isUnpavedWay(way.tags || {});
+    if (!unpaved) return;
+
+    way.geometry.forEach((pt) => {
+      const key = `${Math.floor(pt.lat / cellSize)}|${Math.floor(pt.lon / cellSize)}`;
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push({ lat: pt.lat, lon: pt.lon });
+    });
+  });
+
+  return index;
+}
+
+function isNearUnpavedWay(lat, lon, index) {
+  const cellSize = 0.02;
+  const cx = Math.floor(lat / cellSize);
+  const cy = Math.floor(lon / cellSize);
+  let candidates = [];
+
+  for (let dx = -1; dx <= 1; dx += 1) {
+    for (let dy = -1; dy <= 1; dy += 1) {
+      const key = `${cx + dx}|${cy + dy}`;
+      if (index.has(key)) {
+        candidates = candidates.concat(index.get(key));
+      }
+    }
+  }
+
+  if (!candidates.length) return false;
+
+  let best = Infinity;
+  for (const c of candidates) {
+    const d = haversineKm(lat, lon, c.lat, c.lon);
+    if (d < best) best = d;
+  }
+
+  // 120 m proximity threshold
+  return best <= 0.12;
+}
+
+function isUnpavedWay(tags) {
+  const surface = (tags.surface || "").toLowerCase();
+  const tracktype = (tags.tracktype || "").toLowerCase();
+  const highway = (tags.highway || "").toLowerCase();
+
+  if (surface && UNPAVED_SURFACES.has(surface)) {
+    return true;
+  }
+  if (tracktype && ["grade3", "grade4", "grade5"].includes(tracktype)) {
+    return true;
+  }
+  if (highway === "track" && !surface) {
+    return true;
+  }
+  return false;
+}
+
+function computeLatLngBoundingBox(latLngs, padDeg = 0) {
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLon = Infinity;
+  let maxLon = -Infinity;
+
+  latLngs.forEach(([lat, lon]) => {
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+    if (lon < minLon) minLon = lon;
+    if (lon > maxLon) maxLon = lon;
+  });
+
+  return {
+    minLat: minLat - padDeg,
+    maxLat: maxLat + padDeg,
+    minLon: minLon - padDeg,
+    maxLon: maxLon + padDeg,
+  };
+}
+
+function estimatePolylineKm(polylines) {
+  let totalKm = 0;
+  polylines.forEach((line) => {
+    for (let i = 1; i < line.length; i += 1) {
+      totalKm += haversineKm(
+        line[i - 1][0],
+        line[i - 1][1],
+        line[i][0],
+        line[i][1],
+      );
+    }
+  });
+  return totalKm;
+}
+
+function attachTileErrorHandling(layer) {
+  layer.on("tileerror", () => {
+    tileErrorCount += 1;
+    setMapStatus(
+      `Basemap: ${currentTileProviderName} | Tile-Fehler: ${tileErrorCount}`,
+    );
+
+    if (tileErrorCount >= 8 && !hasSwitchedTileProvider) {
+      hasSwitchedTileProvider = true;
+      const fallbackName = currentTileProviderName === "OpenStreetMap"
+        ? "CartoLight"
+        : "OpenStreetMap";
+      switchToTileProvider(fallbackName);
+      setMapStatus(
+        "Basemap gewechselt (Tile-Fehler). Bitte Netz/CSP prüfen.",
+      );
+      return;
+    }
+
+    if (tileErrorCount >= 16) {
+      setMapStatus(
+        "Karten-Tiles blockiert. Externe Domains im Hosting prüfen.",
+      );
+    }
+  });
+
+  layer.on("load", () => {
+    setMapStatus(
+      `Basemap: ${currentTileProviderName} | Tiles geladen`,
+    );
+  });
+}
+
+function switchToTileProvider(providerName) {
+  if (!mapInstance || !mapBaseLayers || !mapBaseLayers[providerName]) return;
+  if (mapTileLayer) mapInstance.removeLayer(mapTileLayer);
+  mapTileLayer = mapBaseLayers[providerName];
+  currentTileProviderName = providerName;
+  mapTileLayer.addTo(mapInstance);
+  attachTileErrorHandling(mapTileLayer);
+}
+
+function setMapStatus(text) {
+  const el = document.getElementById("map-status");
+  if (!el) return;
+  el.textContent = text;
+}
+
+function buildPoiPopupHtml(poi) {
+  const escapedName = escapeHtml(poi.name || "POI");
+  const escapedType = escapeHtml(poi.type || "POI");
+  const distanceText = `${poi.distanceAheadKm.toFixed(1)} km voraus`;
+  const callLink = poi.phone
+    ? `<a class="popup-link" href="tel:${poi.phone.replace(/\s+/g, "")}">Anrufen</a>`
+    : '<span class="popup-link" style="opacity:0.5;">Keine Nummer</span>';
+
+  return `
+    <p class="popup-title">${escapedName}</p>
+    <p class="popup-meta">${escapedType} · ${distanceText}</p>
+    ${callLink}
+  `;
+}
+
+function escapeHtml(input) {
+  return String(input)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function getPoiKey(poi) {
+  return `${poi.id}|${poi.lat}|${poi.lon}`;
+}
+
+function getRenderableRouteLatLngs() {
+  // Prefer the selected segment, but keep route visible if segment is sparse.
+  const source = lastScanSegmentPoints && lastScanSegmentPoints.length >= 2
+    ? lastScanSegmentPoints
+    : routePoints;
+
+  const latLngs = (source || []).map((p) => [p.lat, p.lon]);
+  if (latLngs.length >= 2) return latLngs;
+
+  // Last-resort fallback for extremely short/invalid segments.
+  if (routePoints.length >= 2) {
+    return routePoints.map((p) => [p.lat, p.lon]);
+  }
+  return latLngs;
+}
+
 // ---------- PWA SERVICE WORKER ----------
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
+  if (
+    location.hostname === "localhost" ||
+    location.hostname === "127.0.0.1"
+  ) {
+    return;
+  }
   window.addEventListener("load", () => {
     navigator.serviceWorker
-      .register("/sw.js")
+      .register("./sw.js")
       .catch((err) => console.warn("SW registration failed", err));
   });
 }

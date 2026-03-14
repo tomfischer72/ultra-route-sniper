@@ -21,6 +21,12 @@
     />
     <link rel="manifest" href="manifest.json" />
     <link rel="stylesheet" href="styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
   </head>
   <body>
     <div id="app">
@@ -101,16 +107,23 @@
               <span>km (1–10)</span>
             </div>
           </label>
+          <button id="sniper-btn" class="btn secondary big" disabled>
+            POI-Scan starten
+          </button>
+          <p class="filter-title">POI-Filter (antippen zum Ein/Ausblenden):</p>
           <div class="poi-filters" aria-label="POI-Filter">
             <button class="chip active" data-poi-filter="lodging">Unterkunft</button>
             <button class="chip active" data-poi-filter="fuel">Tankstelle</button>
-            <button class="chip active" data-poi-filter="food">Lebensmittel</button>
+            <button class="chip active" data-poi-filter="grocery">Shop</button>
+            <button class="chip active" data-poi-filter="restaurant">Restaurant</button>
+            <button class="chip active" data-poi-filter="cafe">Cafe/Baeckerei</button>
+            <button class="chip active" data-poi-filter="fastfood">Fast Food</button>
             <button class="chip active" data-poi-filter="water">Wasser</button>
             <button class="chip active" data-poi-filter="camping">Camping</button>
             <button class="chip active" data-poi-filter="shelter">Shelter</button>
           </div>
-          <button id="sniper-btn" class="btn secondary big" disabled>
-            POI-Scan starten
+          <button id="show-map-btn" class="btn secondary big" disabled>
+            In Karte zeigen
           </button>
           <div id="sniper-status" class="status-text"></div>
           <ul id="poi-list" class="poi-list"></ul>
@@ -118,6 +131,24 @@
       </main>
     </div>
 
+    <section id="map-view" class="map-view hidden" aria-hidden="true">
+      <div class="map-header">
+        <button id="back-to-list-btn" class="btn secondary">Zur Liste</button>
+        <label class="map-toggle">
+          <input id="unpaved-toggle" type="checkbox" checked />
+          <span>Unbefestigt</span>
+        </label>
+        <p id="map-view-title" class="map-title">Kartenansicht</p>
+        <p id="map-status" class="map-status"></p>
+      </div>
+      <div id="map-container" class="map-container"></div>
+    </section>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
     <script src="app.js" type="module"></script>
   </body>
 </html>

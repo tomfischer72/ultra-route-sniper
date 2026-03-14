@@ -1,10 +1,10 @@
-const CACHE_NAME = "ultra-route-sniper-shell-v1";
+const CACHE_NAME = "ultra-route-sniper-shell-v4";
 const ASSETS = [
-  "/",
-  "/index.html",
-  "/styles.css",
-  "/app.js",
-  "/manifest.json"
+  "./",
+  "./index.html",
+  "./styles.css",
+  "./app.js",
+  "./manifest.json"
 ];
 
 self.addEventListener("install", (event) => {
@@ -33,6 +33,24 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET") return;
+
+  // Always try network first for HTML/navigation to avoid stale app shell.
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          return response;
+        })
+        .catch(() =>
+          caches.match(request).then(
+            (cached) => cached || caches.match("./index.html"),
+          ),
+        ),
+    );
+    return;
+  }
 
   event.respondWith(
     caches.match(request).then((cached) => {

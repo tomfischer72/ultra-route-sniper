@@ -215,7 +215,13 @@ main {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
-  margin-bottom: 0.75rem;
+  margin: 0.45rem 0 0.75rem;
+}
+
+.filter-title {
+  margin: 0.7rem 0 0.2rem;
+  font-size: 0.83rem;
+  color: var(--text-muted);
 }
 
 .chip {
@@ -273,7 +279,7 @@ main {
 
 .poi-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.5rem;
   margin-top: 0.5rem;
 }
@@ -284,6 +290,127 @@ main {
 
 .poi-action-btn {
   width: 100%;
+}
+
+.map-view {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: #050509;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.hidden {
+  display: none;
+}
+
+.map-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.3);
+  background: rgba(5, 5, 9, 0.95);
+}
+
+.map-header .btn {
+  width: auto;
+  min-width: 120px;
+  padding: 0.6rem 0.95rem;
+  font-size: 0.9rem;
+}
+
+.map-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.map-toggle input {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: #22c55e;
+}
+
+.map-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.map-status {
+  margin: 0 0 0 auto;
+  color: #f59e0b;
+  font-size: 0.78rem;
+  text-align: right;
+  max-width: 44%;
+}
+
+.map-container {
+  height: calc(100dvh - 64px);
+  min-height: 320px;
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: #0f172a;
+  color: var(--text);
+}
+
+.leaflet-popup-content {
+  margin: 0.65rem 0.75rem;
+}
+
+.map-legend {
+  background: rgba(5, 10, 20, 0.9);
+  color: #e5e7eb;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 10px;
+  padding: 0.45rem 0.55rem;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.legend-swatch {
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  flex-shrink: 0;
+}
+
+.popup-title {
+  margin: 0 0 0.3rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.popup-meta {
+  margin: 0 0 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.popup-link {
+  display: inline-block;
+  padding: 0.32rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  text-decoration: none;
+  color: var(--text);
+  font-size: 0.82rem;
 }
 
 @media (min-width: 640px) {
