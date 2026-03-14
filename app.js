@@ -15,6 +15,10 @@ const DEFAULT_POI_FILTERS = [
   "camping",
   "shelter",
 ];
+const DEFAULT_RANGE_BY_MODE = {
+  plan: { startKm: 50, endKm: 120 },
+  live: { startKm: 80, endKm: 120 },
+};
 
 let db;
 let routePoints = []; // { lat, lon, cumDistKm }
@@ -31,6 +35,7 @@ let mapUnpavedLayer = null;
 let mapPoiLayer = null;
 let mapStartEndLayer = null;
 let mapPoiMarkerByKey = new Map();
+let mapPoiDataByKey = new Map();
 let mapTileLayer = null;
 let mapBaseLayers = null;
 let mapLegendControl = null;
@@ -40,6 +45,8 @@ let hasSwitchedTileProvider = false;
 let surfaceAnalysisToken = 0;
 const surfaceOverlayCache = new Map();
 let showUnpavedOverlay = true;
+let activeUnpavedMode = "conservative";
+let activeRangeMode = "plan"; // plan | live
 
 const POI_CATEGORY_COLORS = {
   lodging: "#3b82f6",
@@ -55,6 +62,22 @@ const POI_CATEGORY_COLORS = {
 };
 
 const UNPAVED_SURFACE_COLOR = "#f97316";
+const UNPAVED_MODE_CONFIG = {
+  normal: {
+    proximityThresholdKm: 0.08, // 80 m, more permissive
+    minSegmentKm: 0.12, // keep shorter fragments
+    includeCompacted: true,
+    includeGrade3: true,
+    allowTrackWithoutSurface: true,
+  },
+  conservative: {
+    proximityThresholdKm: 0.03, // 30 m
+    minSegmentKm: 0.35, // hide tiny noisy fragments
+    includeCompacted: false,
+    includeGrade3: false,
+    allowTrackWithoutSurface: false,
+  },
+};
 const UNPAVED_SURFACES = new Set([
   "unpaved",
   "gravel",
@@ -70,6 +93,26 @@ const UNPAVED_SURFACES = new Set([
   "pebblestone",
   "woodchips",
 ]);
+const PAVED_SURFACES = new Set([
+  "paved",
+  "asphalt",
+  "concrete",
+  "concrete:lanes",
+  "concrete:plates",
+  "paving_stones",
+  "sett",
+  "cobblestone",
+  "chipseal",
+]);
+const UNPAVED_TRACKTYPES = new Set(["grade4", "grade5"]);
+const NON_RIDEABLE_HIGHWAYS = new Set([
+  "footway",
+  "pedestrian",
+  "steps",
+  "corridor",
+  "bridleway",
+]);
+const BIKE_OK_VALUES = new Set(["yes", "designated", "permissive", "official"]);
 
 const TILE_PROVIDERS = {
   OpenStreetMap: {
@@ -90,17 +133,332 @@ const TILE_PROVIDERS = {
   },
 };
 
+const SUPPORTED_LANGUAGES = ["de", "en", "fr", "it"];
+const SUPPORTED_THEMES = ["system", "light", "dark"];
+const SUPPORTED_NAV_APPS = ["system", "mapy", "google", "apple"];
+const I18N = {
+  de: {
+    "app.title": "Ultra Route Sniper",
+    "app.subtitle": "Offline PWA · GPX · POI-Suche",
+    "app.languageLabel": "Sprache",
+    "app.themeLabel": "Modus",
+    "app.themeSystem": "System",
+    "app.themeLight": "Hell",
+    "app.themeDark": "Dunkel",
+    "app.navAppLabel": "Navigation",
+    "app.navAppSystem": "Standard",
+    "app.navAppMapy": "Mapy",
+    "app.navAppGoogle": "Google Maps",
+    "app.navAppApple": "Apple Karten",
+    "app.footerBy": "Von Tom Fischer (@bikepeopletom)",
+    "app.footerTagline":
+      "Proudly built in Switzerland for the ultrarace community.",
+    "app.footerDonate": "Unterstuetzen",
+    "upload.title": "1. GPX-Strecke laden",
+    "upload.hint":
+      "GPX einmal laden. Danach bleibt die Strecke lokal gespeichert (offline nutzbar).",
+    "upload.chooseFile": "Datei wählen",
+    "upload.useStored": "Gespeicherte Strecke laden",
+    "location.title": "2. Ortung",
+    "location.hint": "Standort bestimmen und Route abgleichen.",
+    "location.startButton": "Standort bestimmen",
+    "sniper.title": "3. POI-Suche",
+    "sniper.hint":
+      "Suche POIs im gewählten Kilometerfenster entlang der Route.",
+    "sniper.modePlan": "Ab Routenstart",
+    "sniper.modeLive": "Ab aktuellem Standort",
+    "sniper.modePlanHint": "Sucht ab Routenstart (km 0).",
+    "sniper.modeLiveHint":
+      "Sucht ab aktuellem Standort auf der Route.",
+    "sniper.modeInfo":
+      "Modus bestimmt den Startpunkt fuer die Suche: Routenstart oder aktueller Standort.",
+    "sniper.windowLabel": "Gewuenschter Suchbereich (km entlang der Route):",
+    "sniper.windowInfo":
+      "Von/Bis definiert den Suchbereich in Kilometern ab dem gewaehlten Modus.",
+    "sniper.corridorLabel": "Max. Abstand links/rechts der Route:",
+    "sniper.corridorInfo":
+      "Nur POIs innerhalb dieses Abstands zur Route werden angezeigt.",
+    "sniper.corridorRange": "km (1-10)",
+    "sniper.scanButton": "POIs suchen",
+    "sniper.filterTitle": "POI-Filter (ein/aus):",
+    "sniper.clearFilters": "Alle Filter deaktivieren",
+    "sniper.ctaHint": "Filter gesetzt? Dann POIs suchen.",
+    "sniper.showMapButton": "Karte anzeigen",
+    "map.backToList": "Zur Liste",
+    "map.unpavedToggle": "Unbefestigt",
+    "map.unpavedModeLabel": "Unpaved-Modus",
+    "map.unpavedModeConservative": "Konservativ",
+    "map.unpavedModeNormal": "Normal",
+    "map.unpavedModeInfo":
+      "Konservativ zeigt weniger, aber sicherere unbefestigte Abschnitte. Normal zeigt mehr Treffer.",
+    "map.title": "Kartenansicht",
+    "poi.lodging": "Unterkunft",
+    "poi.fuel": "Tankstelle",
+    "poi.grocery": "Shop",
+    "poi.restaurant": "Restaurant",
+    "poi.cafe": "Cafe/Baeckerei",
+    "poi.fastfood": "Fast Food",
+    "poi.water": "Wasser",
+    "poi.camping": "Camping",
+    "poi.shelter": "Shelter",
+    "poi.other": "POI",
+    "poi.call": "Anrufen",
+    "poi.openMaps": "Route starten",
+    "poi.navigate": "Bring mich hin",
+    "poi.onMap": "POI auf Karte",
+    "status.modeChanged": "Suchmodus gewechselt. Bitte Suche neu starten.",
+    "status.noFilterSelected":
+      "Keine Filter aktiv - bitte mindestens eine Kategorie wählen.",
+    "status.activeCategories": "Aktive Kategorien: {categories}",
+    "status.dbInitError":
+      "Fehler beim Initialisieren des lokalen Speichers.",
+    "status.noStoredTrack":
+      "Keine Strecke gespeichert. Bitte GPX laden.",
+    "status.storedTrackFound":
+      "Strecke gefunden ({points} Punkte).",
+    "status.storedTrackLoaded":
+      "Strecke geladen ({points} Punkte).",
+    "status.storedTrackLoadError":
+      "Fehler beim Laden der gespeicherten Strecke.",
+    "status.readingGpx": "Lese GPX-Datei ...",
+    "status.gpxNoPoints":
+      "Keine gültigen Trackpunkte in der GPX-Datei gefunden.",
+    "status.gpxLoaded":
+      "Strecke geladen ({points} Punkte, ca. {km} km).",
+    "status.gpxParseError": "Fehler beim Parsen der GPX-Datei.",
+    "status.gpxReadError": "Fehler beim Lesen der Datei.",
+    "status.geoUnsupported":
+      "Geolocation wird von diesem Gerät nicht unterstützt.",
+    "status.geoLocating": "Standort wird bestimmt ...",
+    "status.geoPosition": "Lat: {lat}, Lon: {lon} (+/-{acc} m)",
+    "status.geoDenied":
+      "Ortungszugriff verweigert. Bitte im Browser erlauben.",
+    "status.geoTimeout":
+      "Ortung dauerte zu lange. Bitte erneut versuchen.",
+    "status.geoGeneric": "Fehler bei der Ortung.",
+    "status.routeMissing":
+      "Noch keine Strecke im Speicher. Bitte zuerst GPX laden oder gespeicherte Strecke aktivieren.",
+    "status.routeUnknown":
+      "Konnte Position auf der Route nicht bestimmen.",
+    "status.routeNear": "Du liegst sehr nah an der Strecke.",
+    "status.routeAway": "Abstand zur Strecke ca. {km} km.",
+    "status.routePosition":
+      "Position auf der Route: km {km}. {distanceText}",
+    "status.liveNeedsLocation":
+      "Keine aktuelle Position auf der Route bekannt. Bitte zuerst Standort bestimmen.",
+    "status.invalidRange": "Bitte gültige Kilometerangaben eingeben.",
+    "status.invalidRangeOrder":
+      "Der Endwert muss groesser als der Startwert sein.",
+    "status.routeLengthUnknown":
+      "Streckenlänge unbekannt (GPX nicht geladen?).",
+    "status.windowOutside":
+      "Fenster ausserhalb der Strecke ({mode}). Referenz km {ref} von {total} (Rest: {rest} km).",
+    "status.scanning":
+      "Suche {mode}: km {start} bis {end} ...",
+    "status.noSegmentPoints":
+      "Keine Punkte im gewählten Abschnitt gefunden.",
+    "status.noPois":
+      "Keine passenden POIs im gewählten Korridor gefunden.",
+    "status.poisFound": "{count} Orte im Korridor gefunden.",
+    "status.poiLoadError":
+      "Fehler beim Laden der POIs (Overpass). Bitte nochmals versuchen.",
+    "status.mapNoScan":
+      "Keine Scan-Daten vorhanden. Bitte zuerst einen POI-Scan starten.",
+    "status.mapUnavailable":
+      "Karte konnte nicht geladen werden (Leaflet nicht verfügbar).",
+    "status.mapNeedScan": "Bitte zuerst einen POI-Scan starten.",
+    "status.mapTilesLoaded": "Basemap: {provider} | Tiles geladen",
+    "status.mapTileErrors": "Basemap: {provider} | Tile-Fehler: {count}",
+    "status.mapTileSwitched":
+      "Basemap gewechselt (Tile-Fehler). Bitte Netz/CSP prüfen.",
+    "status.mapTileBlocked":
+      "Karten-Tiles blockiert. Externe Domains im Hosting prüfen.",
+    "status.mapUnpavedAnalyzing":
+      "Basemap: {provider} | analysiere Untergrund ...",
+    "status.mapUnpavedKm":
+      "Basemap: {provider} | Unbefestigt ~{km} km",
+    "status.mapUnpavedUnavailable":
+      "Basemap: {provider} | Untergrund-Analyse nicht verfügbar",
+    "status.mapUnpavedOn":
+      "Basemap: {provider} | Unbefestigt eingeblendet",
+    "status.mapUnpavedOff":
+      "Basemap: {provider} | Unbefestigt ausgeblendet",
+    "status.mapScanMeta":
+      "Basemap: {provider} | Routepunkte: {routePoints} | POIs: {poiCount}",
+    "map.legendRoute": "Route",
+    "map.legendUnpaved": "Unbefestigt",
+    "map.legendLodging": "Unterkunft",
+    "map.legendFuel": "Tankstelle",
+    "map.legendGrocery": "Shop",
+    "map.legendRestaurant": "Restaurant",
+    "map.legendCafe": "Cafe/Baeckerei",
+    "map.legendFastfood": "Fast Food",
+    "map.legendWater": "Wasser",
+    "map.legendCamping": "Camping",
+    "map.legendShelter": "Shelter",
+    "map.scanWindowTitle":
+      "{mode} | Fenster {start}-{end} km | Breite {corridor} km",
+    "map.modePlan": "Ab Routenstart (km 0)",
+    "map.modeLive": "Ab Standort (km {ref})",
+    "map.startTooltip": "Fenster-Start",
+    "map.endTooltip": "Fenster-Ende",
+    "poi.popupDistance": "{distance} km voraus",
+    "poi.popupNoNumber": "Keine Nummer",
+  },
+  en: {},
+  fr: {},
+  it: {},
+};
+
+I18N.en = {
+  ...I18N.de,
+  "app.languageLabel": "Language",
+  "app.themeLabel": "Theme",
+  "app.themeSystem": "System",
+  "app.themeLight": "Light",
+  "app.themeDark": "Dark",
+  "app.navAppLabel": "Navigation",
+  "app.navAppSystem": "Default",
+  "app.navAppMapy": "Mapy",
+  "app.navAppGoogle": "Google Maps",
+  "app.navAppApple": "Apple Maps",
+  "app.footerBy": "By Tom Fischer (@bikepeopletom)",
+  "app.footerTagline":
+    "Proudly built in Switzerland for the ultrarace community.",
+  "app.footerDonate": "Donate",
+  "upload.title": "1. Load GPX route",
+  "upload.hint":
+    "Load your race GPX once, then keep it stored locally for offline use.",
+  "upload.chooseFile": "Choose file",
+  "upload.useStored": "Use stored route",
+  "location.title": "2. Location",
+  "location.hint":
+    "Get your current position and match it to the route.",
+  "location.startButton": "Start location",
+  "sniper.title": "3. Sniper mode",
+  "sniper.hint": "Search POIs in the selected kilometer window along the route.",
+  "sniper.modePlan": "Planning (from km 0)",
+  "sniper.modeLive": "On route (from now)",
+  "sniper.modePlanHint": "Planning: window relative to route start.",
+  "sniper.modeLiveHint":
+    "On route: window relative to current position on route.",
+  "sniper.modeInfo":
+    "Mode defines the search start point: route start or current position.",
+  "sniper.windowLabel": "Search range (km along the route):",
+  "sniper.windowInfo":
+    "From/To defines the search range in kilometers from the selected mode.",
+  "sniper.corridorLabel": "Max. distance left/right from route:",
+  "sniper.corridorInfo":
+    "Only POIs inside this distance from the route are shown.",
+  "sniper.scanButton": "Start POI scan",
+  "sniper.filterTitle": "POI filters (tap to toggle):",
+  "sniper.clearFilters": "Disable all filters",
+  "sniper.ctaHint": "Filters ready? Tap Start POI scan.",
+  "sniper.showMapButton": "Show on map",
+  "map.backToList": "Back to list",
+  "map.unpavedToggle": "Unpaved",
+  "map.unpavedModeLabel": "Unpaved mode",
+  "map.unpavedModeConservative": "Conservative",
+  "map.unpavedModeNormal": "Normal",
+  "map.unpavedModeInfo":
+    "Conservative shows fewer but safer unpaved sections. Normal shows more matches.",
+  "map.title": "Map view",
+  "poi.lodging": "Lodging",
+  "poi.fuel": "Fuel",
+  "poi.grocery": "Shop",
+  "poi.restaurant": "Restaurant",
+  "poi.cafe": "Cafe/Bakery",
+  "poi.fastfood": "Fast Food",
+  "poi.water": "Water",
+  "poi.camping": "Camping",
+  "poi.shelter": "Shelter",
+  "poi.call": "Call",
+  "poi.openMaps": "Start route",
+  "poi.navigate": "Navigate",
+  "poi.onMap": "POI on map",
+  "status.storedTrackFound": "Stored route found ({points} points).",
+  "status.storedTrackLoaded": "Stored route loaded ({points} points).",
+  "status.modeChanged": "Search mode changed. Please start a new search.",
+  "status.routeMissing":
+    "No route in memory yet. Please load GPX or activate stored route first.",
+  "status.routeNear": "You are very close to the route.",
+  "status.routeAway": "Distance to route about {km} km.",
+  "status.routePosition": "Position on route: km {km}. {distanceText}",
+  "status.windowOutside":
+    "Window outside route ({mode}). Reference km {ref} of {total} (remaining: {rest} km).",
+  "status.poisFound": "{count} places found in corridor.",
+  "status.poiLoadError":
+    "Failed to load POIs (Overpass). Please try again.",
+  "status.gpxLoaded":
+    "Route loaded and saved ({points} points, total about {km} km).",
+  "map.scanWindowTitle":
+    "{mode} | Window {start}-{end} km | Width {corridor} km",
+  "map.modePlan": "From route start (km 0)",
+  "map.modeLive": "From current position km {ref}",
+  "map.legendUnpaved": "Unpaved",
+  "map.legendLodging": "Lodging",
+  "map.legendFuel": "Fuel",
+  "map.legendGrocery": "Shop",
+  "map.legendRestaurant": "Restaurant",
+  "map.legendCafe": "Cafe/Bakery",
+  "map.legendFastfood": "Fast Food",
+  "map.legendWater": "Water",
+  "map.legendCamping": "Camping",
+  "map.legendShelter": "Shelter",
+  "status.mapScanMeta":
+    "Basemap: {provider} | Route points: {routePoints} | POIs: {poiCount}",
+};
+I18N.fr = {
+  ...I18N.en,
+  "app.languageLabel": "Langue",
+  "app.themeLabel": "Theme",
+  "app.themeSystem": "Systeme",
+  "app.themeLight": "Clair",
+  "app.themeDark": "Sombre",
+  "upload.title": "1. Charger l'itineraire GPX",
+  "upload.chooseFile": "Choisir un fichier",
+  "upload.useStored": "Utiliser l'itineraire enregistre",
+  "location.title": "2. Position",
+  "location.startButton": "Demarrer la localisation",
+  "sniper.title": "3. Mode Sniper",
+  "sniper.modePlan": "Planification (depuis km 0)",
+  "sniper.modeLive": "En route (depuis maintenant)",
+  "sniper.scanButton": "Lancer le scan POI",
+  "sniper.showMapButton": "Afficher sur la carte",
+  "map.backToList": "Retour a la liste",
+};
+I18N.it = {
+  ...I18N.en,
+  "app.languageLabel": "Lingua",
+  "app.themeLabel": "Tema",
+  "app.themeSystem": "Sistema",
+  "app.themeLight": "Chiaro",
+  "app.themeDark": "Scuro",
+  "upload.title": "1. Carica traccia GPX",
+  "upload.chooseFile": "Seleziona file",
+  "upload.useStored": "Usa traccia salvata",
+  "location.title": "2. Posizione",
+  "location.startButton": "Avvia localizzazione",
+  "sniper.title": "3. Modalita Sniper",
+  "sniper.modePlan": "Pianificazione (da km 0)",
+  "sniper.modeLive": "In corsa (da adesso)",
+  "sniper.scanButton": "Avvia scansione POI",
+  "sniper.showMapButton": "Mostra sulla mappa",
+  "map.backToList": "Torna alla lista",
+};
+
+let currentLanguage = "de";
+let currentTheme = "system";
+let currentNavApp = "system";
+const systemThemeMedia = window.matchMedia("(prefers-color-scheme: dark)");
+
 document.addEventListener("DOMContentLoaded", () => {
   initUI();
   initDB()
     .then(() => checkStoredGpx())
     .catch((err) => {
       console.error("DB init failed", err);
-      setStatus(
-        "gpx-status",
-        "Fehler beim Initialisieren des lokalen Speichers.",
-        "error",
-      );
+      setStatus("gpx-status", t("status.dbInitError"), "error");
     });
   registerServiceWorker();
 });
@@ -113,7 +471,13 @@ function initUI() {
   const showMapBtn = document.getElementById("show-map-btn");
   const backToListBtn = document.getElementById("back-to-list-btn");
   const unpavedToggle = document.getElementById("unpaved-toggle");
+  const unpavedModeSelect = document.getElementById("unpaved-mode-select");
   const filterContainer = document.querySelector(".poi-filters");
+  const clearFiltersBtn = document.getElementById("clear-filters-btn");
+  const rangeModeContainer = document.querySelector(".range-mode");
+  const languageSelect = document.getElementById("language-select");
+  const themeSelect = document.getElementById("theme-select");
+  const navAppSelect = document.getElementById("navapp-select");
 
   gpxInput.addEventListener("change", handleGpxFileSelect);
   useStoredBtn.addEventListener("click", async () => {
@@ -136,13 +500,166 @@ function initUI() {
       }
     });
   }
+  if (unpavedModeSelect) {
+    unpavedModeSelect.addEventListener("change", (event) => {
+      setUnpavedMode(event.target.value);
+    });
+  }
 
   if (filterContainer) {
     filterContainer.addEventListener("click", handleFilterClick);
   }
+  if (clearFiltersBtn) {
+    clearFiltersBtn.addEventListener("click", handleClearFiltersClick);
+  }
+  if (rangeModeContainer) {
+    rangeModeContainer.addEventListener("click", handleRangeModeClick);
+  }
+  if (languageSelect) {
+    languageSelect.addEventListener("change", (event) => {
+      setLanguage(event.target.value);
+    });
+  }
+  if (themeSelect) {
+    themeSelect.addEventListener("change", (event) => {
+      setTheme(event.target.value);
+    });
+  }
+  if (navAppSelect) {
+    navAppSelect.addEventListener("change", (event) => {
+      setNavApp(event.target.value);
+    });
+  }
+  document.addEventListener("click", handlePoiActionClick);
+  systemThemeMedia.addEventListener("change", () => {
+    if (currentTheme === "system") {
+      applyTheme("system");
+    }
+  });
+  initNavApp();
+  initUnpavedMode();
+  initTheme();
+  initLanguage();
+  applyRangeModeUI(false);
 }
 
 // ---------- STATUS HELPERS ----------
+
+function initTheme() {
+  const storedTheme = localStorage.getItem("ultraRouteSniperTheme");
+  const selected = SUPPORTED_THEMES.includes(storedTheme) ? storedTheme : "system";
+  setTheme(selected);
+}
+
+function setTheme(theme) {
+  const normalized = SUPPORTED_THEMES.includes(theme) ? theme : "system";
+  currentTheme = normalized;
+  localStorage.setItem("ultraRouteSniperTheme", normalized);
+
+  const select = document.getElementById("theme-select");
+  if (select) select.value = normalized;
+
+  applyTheme(normalized);
+}
+
+function applyTheme(theme) {
+  const resolvedTheme =
+    theme === "system" ? (systemThemeMedia.matches ? "dark" : "light") : theme;
+  document.documentElement.setAttribute("data-theme", resolvedTheme);
+}
+
+function initUnpavedMode() {
+  const storedMode = localStorage.getItem("ultraRouteSniperUnpavedMode");
+  const selected = storedMode === "normal" || storedMode === "conservative"
+    ? storedMode
+    : "conservative";
+  setUnpavedMode(selected, false);
+}
+
+function setUnpavedMode(mode, refresh = true) {
+  const normalized = mode === "normal" ? "normal" : "conservative";
+  activeUnpavedMode = normalized;
+  localStorage.setItem("ultraRouteSniperUnpavedMode", normalized);
+  const select = document.getElementById("unpaved-mode-select");
+  if (select) select.value = normalized;
+
+  if (!refresh) return;
+  if (!lastScanSegmentPoints.length) return;
+  if (!mapInstance) return;
+  updateUnpavedOverlay(getRenderableRouteLatLngs());
+}
+
+function getUnpavedModeConfig() {
+  return UNPAVED_MODE_CONFIG[activeUnpavedMode] || UNPAVED_MODE_CONFIG.conservative;
+}
+
+function initNavApp() {
+  const stored = localStorage.getItem("ultraRouteSniperNavApp");
+  const selected = SUPPORTED_NAV_APPS.includes(stored) ? stored : "system";
+  setNavApp(selected);
+}
+
+function setNavApp(app) {
+  const normalized = SUPPORTED_NAV_APPS.includes(app) ? app : "system";
+  currentNavApp = normalized;
+  localStorage.setItem("ultraRouteSniperNavApp", normalized);
+  const select = document.getElementById("navapp-select");
+  if (select) select.value = normalized;
+}
+
+function initLanguage() {
+  const stored = localStorage.getItem("ultraRouteSniperLang");
+  const nav = (navigator.language || "de").slice(0, 2).toLowerCase();
+  const selected = SUPPORTED_LANGUAGES.includes(stored)
+    ? stored
+    : SUPPORTED_LANGUAGES.includes(nav)
+      ? nav
+      : "de";
+  setLanguage(selected);
+}
+
+function setLanguage(lang) {
+  const normalized = SUPPORTED_LANGUAGES.includes(lang) ? lang : "de";
+  currentLanguage = normalized;
+  localStorage.setItem("ultraRouteSniperLang", normalized);
+  document.documentElement.lang = normalized;
+
+  const select = document.getElementById("language-select");
+  if (select) select.value = normalized;
+
+  applyStaticTranslations();
+  applyRangeModeUI(false);
+  if (lastScanResults.length) {
+    renderPoiList(lastScanResults);
+  }
+  if (db) {
+    checkStoredGpx().catch(() => {});
+  }
+  if (lastGeoPosition && routePoints.length) {
+    updateRoutePosition(lastGeoPosition.lat, lastGeoPosition.lon);
+  }
+  const mapView = document.getElementById("map-view");
+  if (mapView && !mapView.classList.contains("hidden") && lastScanSegmentPoints.length) {
+    renderMapForLastScan();
+  }
+}
+
+function applyStaticTranslations() {
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    const key = el.getAttribute("data-i18n");
+    el.textContent = t(key);
+  });
+}
+
+function t(key, vars = {}) {
+  const dict = I18N[currentLanguage] || I18N.de;
+  const fallback = I18N.en[key] || I18N.de[key] || key;
+  const raw = dict[key] || fallback;
+  return Object.entries(vars).reduce(
+    (acc, [k, v]) => acc.replaceAll(`{${k}}`, String(v)),
+    raw,
+  );
+}
 
 function setStatus(elementId, text, type) {
   const el = document.getElementById(elementId);
@@ -158,7 +675,7 @@ function updateSniperButtonState() {
   const sniperBtn = document.getElementById("sniper-btn");
   if (!sniperBtn) return;
   const hasRoute = routePoints && routePoints.length > 0;
-  const hasPosition = !!lastRouteMatch;
+  const hasPosition = activeRangeMode === "live" ? !!lastRouteMatch : true;
   const hasFilters = activePoiFilters.size > 0;
   sniperBtn.disabled = !(hasRoute && hasPosition && hasFilters);
 }
@@ -180,13 +697,78 @@ function handleFilterClick(event) {
 
   const filterInfo =
     activePoiFilters.size === 0
-      ? "Keine Filter aktiv – bitte mindestens eine Kategorie wählen."
-      : `Aktive Kategorien: ${Array.from(activePoiFilters).join(", ")}`;
+      ? t("status.noFilterSelected")
+      : t("status.activeCategories", {
+          categories: Array.from(activePoiFilters)
+            .map((c) => t(`poi.${c}`))
+            .join(", "),
+        });
 
   setStatus("sniper-status", filterInfo, "info");
   // Bereits gescannte Ergebnisse sind nach Filterwechsel ggf. veraltet.
   document.getElementById("show-map-btn").disabled = true;
   updateSniperButtonState();
+  if (mapInstance && mapLegendControl) {
+    addOrUpdateMapLegend();
+  }
+}
+
+function handleClearFiltersClick() {
+  activePoiFilters.clear();
+  document.querySelectorAll(".chip[data-poi-filter]").forEach((chip) => {
+    chip.classList.remove("active");
+  });
+  setStatus("sniper-status", t("status.noFilterSelected"), "info");
+  document.getElementById("show-map-btn").disabled = true;
+  updateSniperButtonState();
+  if (mapInstance && mapLegendControl) {
+    addOrUpdateMapLegend();
+  }
+}
+
+function handleRangeModeClick(event) {
+  const target = event.target.closest(".chip[data-range-mode]");
+  if (!target) return;
+
+  const mode = target.getAttribute("data-range-mode");
+  if (!mode || (mode !== "plan" && mode !== "live")) return;
+  if (mode === activeRangeMode) return;
+
+  activeRangeMode = mode;
+  applyRangeModeUI(true);
+  lastScanResults = [];
+  lastScanSegmentPoints = [];
+  lastScanRange = null;
+  const showMapBtn = document.getElementById("show-map-btn");
+  if (showMapBtn) showMapBtn.disabled = true;
+  setStatus("sniper-status", t("status.modeChanged"), "info");
+  updateSniperButtonState();
+}
+
+function applyRangeModeUI(applyDefaults) {
+  const chips = document.querySelectorAll(".chip[data-range-mode]");
+  chips.forEach((chip) => {
+    chip.classList.toggle(
+      "active",
+      chip.getAttribute("data-range-mode") === activeRangeMode,
+    );
+  });
+
+  const hint = document.getElementById("range-mode-hint");
+  if (hint) {
+    hint.textContent =
+      activeRangeMode === "live"
+        ? t("sniper.modeLiveHint")
+        : t("sniper.modePlanHint");
+  }
+
+  if (applyDefaults) {
+    const startInput = document.getElementById("range-start");
+    const endInput = document.getElementById("range-end");
+    const defaults = DEFAULT_RANGE_BY_MODE[activeRangeMode];
+    if (startInput) startInput.value = String(defaults.startKm);
+    if (endInput) endInput.value = String(defaults.endKm);
+  }
 }
 
 function getCorridorWidthKm() {
@@ -259,14 +841,14 @@ async function checkStoredGpx() {
       btn.disabled = false;
       setStatus(
         "gpx-status",
-        `Gespeicherte Strecke gefunden (${record.points.length} Punkte).`,
+        t("status.storedTrackFound", { points: record.points.length }),
         "info",
       );
     } else {
       btn.disabled = true;
       setStatus(
         "gpx-status",
-        "Noch keine Strecke gespeichert. Bitte GPX laden.",
+        t("status.noStoredTrack"),
       );
     }
   } catch (err) {
@@ -278,20 +860,20 @@ async function loadStoredGpxIntoMemory() {
   try {
     const record = await getStoredGpx();
     if (!record || !record.points || record.points.length === 0) {
-      setStatus("gpx-status", "Keine gespeicherte Strecke gefunden.", "error");
+      setStatus("gpx-status", t("status.noStoredTrack"), "error");
       return;
     }
     routePoints = record.points;
     setStatus(
       "gpx-status",
-      `Gespeicherte Strecke geladen (${routePoints.length} Punkte).`,
+      t("status.storedTrackLoaded", { points: routePoints.length }),
       "info",
     );
   } catch (err) {
     console.error(err);
     setStatus(
       "gpx-status",
-      "Fehler beim Laden der gespeicherten Strecke.",
+      t("status.storedTrackLoadError"),
       "error",
     );
   }
@@ -303,7 +885,7 @@ function handleGpxFileSelect(event) {
   const file = event.target.files && event.target.files[0];
   if (!file) return;
 
-  setStatus("gpx-status", "Lese GPX-Datei …");
+  setStatus("gpx-status", t("status.readingGpx"));
 
   const reader = new FileReader();
   reader.onload = async (e) => {
@@ -313,7 +895,7 @@ function handleGpxFileSelect(event) {
       if (!parsed || parsed.length === 0) {
         setStatus(
           "gpx-status",
-          "Keine gültigen Trackpunkte in der GPX-Datei gefunden.",
+          t("status.gpxNoPoints"),
           "error",
         );
         return;
@@ -323,20 +905,23 @@ function handleGpxFileSelect(event) {
       document.getElementById("use-stored-gpx-btn").disabled = false;
       setStatus(
         "gpx-status",
-        `Strecke geladen und gespeichert (${parsed.length} Punkte, Gesamtlänge ca. ${parsed[parsed.length - 1].cumDistKm.toFixed(1)} km).`,
+        t("status.gpxLoaded", {
+          points: parsed.length,
+          km: parsed[parsed.length - 1].cumDistKm.toFixed(1),
+        }),
         "info",
       );
     } catch (err) {
       console.error(err);
       setStatus(
         "gpx-status",
-        "Fehler beim Parsen der GPX-Datei.",
+        t("status.gpxParseError"),
         "error",
       );
     }
   };
   reader.onerror = () => {
-    setStatus("gpx-status", "Fehler beim Lesen der Datei.", "error");
+    setStatus("gpx-status", t("status.gpxReadError"), "error");
   };
   reader.readAsText(file);
 }
@@ -463,11 +1048,11 @@ function findNearestRouteKmForLatLon(lat, lon) {
 
 function handleLocateClick() {
   if (!("geolocation" in navigator)) {
-    setStatus("location-status", "Geolocation wird von diesem Gerät nicht unterstützt.", "error");
+    setStatus("location-status", t("status.geoUnsupported"), "error");
     return;
   }
 
-  setStatus("location-status", "Bestimme aktuelle Position …");
+  setStatus("location-status", t("status.geoLocating"));
 
   const btn = document.getElementById("locate-btn");
   btn.disabled = true;
@@ -484,7 +1069,11 @@ function handleLocateClick() {
       const { latitude, longitude, accuracy } = pos.coords;
       setStatus(
         "location-status",
-        `Lat: ${latitude.toFixed(5)}, Lon: ${longitude.toFixed(5)} (±${Math.round(accuracy)} m)`,
+        t("status.geoPosition", {
+          lat: latitude.toFixed(5),
+          lon: longitude.toFixed(5),
+          acc: Math.round(accuracy),
+        }),
         "info",
       );
       updateRoutePosition(latitude, longitude);
@@ -492,11 +1081,11 @@ function handleLocateClick() {
     (err) => {
       btn.disabled = false;
       console.error(err);
-      let msg = "Fehler bei der Ortung.";
+      let msg = t("status.geoGeneric");
       if (err.code === err.PERMISSION_DENIED) {
-        msg = "Ortungszugriff verweigert. Bitte im Browser erlauben.";
+        msg = t("status.geoDenied");
       } else if (err.code === err.TIMEOUT) {
-        msg = "Ortung hat zu lange gedauert. Nochmal versuchen.";
+        msg = t("status.geoTimeout");
       }
       setStatus("location-status", msg, "error");
     },
@@ -508,7 +1097,7 @@ function updateRoutePosition(lat, lon) {
   if (!routePoints || routePoints.length === 0) {
     setStatus(
       "route-position",
-      "Noch keine Strecke im Speicher. Bitte zuerst GPX laden oder gespeicherte Strecke aktivieren.",
+      t("status.routeMissing"),
       "error",
     );
     return;
@@ -518,7 +1107,7 @@ function updateRoutePosition(lat, lon) {
   if (!match) {
     setStatus(
       "route-position",
-      "Konnte Position auf der Route nicht bestimmen.",
+      t("status.routeUnknown"),
       "error",
     );
     return;
@@ -530,12 +1119,15 @@ function updateRoutePosition(lat, lon) {
   const { kmOnRoute, distanceToRouteKm } = match;
   const distanceDisplay =
     distanceToRouteKm < 0.05
-      ? "Du liegst sehr nah an der Strecke."
-      : `Abstand zur Strecke ca. ${distanceToRouteKm.toFixed(2)} km.`;
+      ? t("status.routeNear")
+      : t("status.routeAway", { km: distanceToRouteKm.toFixed(2) });
 
   setStatus(
     "route-position",
-    `Position auf der Route: km ${kmOnRoute.toFixed(1)}. ${distanceDisplay}`,
+    t("status.routePosition", {
+      km: kmOnRoute.toFixed(1),
+      distanceText: distanceDisplay,
+    }),
     "info",
   );
 
@@ -545,10 +1137,10 @@ function updateRoutePosition(lat, lon) {
 // ---------- SNIPER MODE (POI SCAN) ----------
 
 async function handleSniperClick() {
-  if (!lastRouteMatch || !lastGeoPosition) {
+  if (activeRangeMode === "live" && (!lastRouteMatch || !lastGeoPosition)) {
     setStatus(
       "sniper-status",
-      "Keine aktuelle Position auf der Route bekannt. Bitte zuerst Ortung starten.",
+      t("status.liveNeedsLocation"),
       "error",
     );
     return;
@@ -565,7 +1157,7 @@ async function handleSniperClick() {
   if (Number.isNaN(startKmAhead) || Number.isNaN(endKmAhead)) {
     setStatus(
       "sniper-status",
-      "Bitte gültige Kilometerangaben eingeben.",
+      t("status.invalidRange"),
       "error",
     );
     return;
@@ -574,35 +1166,43 @@ async function handleSniperClick() {
   if (endKmAhead <= startKmAhead) {
     setStatus(
       "sniper-status",
-      "Der Endwert muss größer als der Startwert sein.",
+      t("status.invalidRangeOrder"),
       "error",
     );
     return;
   }
 
-  const currentKm = lastRouteMatch.kmOnRoute || 0;
   const routeTotalKm =
     routePoints && routePoints.length
       ? routePoints[routePoints.length - 1].cumDistKm
       : 0;
+  const referenceKm =
+    activeRangeMode === "live" ? lastRouteMatch.kmOnRoute || 0 : 0;
+  const modeLabel =
+    activeRangeMode === "live" ? t("map.modeLive", { ref: referenceKm.toFixed(1) }) : t("map.modePlan");
 
-  const segmentStartKm = currentKm + startKmAhead;
-  const segmentEndKm = Math.min(currentKm + endKmAhead, routeTotalKm);
+  const segmentStartKm = referenceKm + startKmAhead;
+  const segmentEndKm = Math.min(referenceKm + endKmAhead, routeTotalKm);
 
   if (!routeTotalKm) {
     setStatus(
       "sniper-status",
-      "Streckenlänge unbekannt (GPX nicht geladen?).",
+      t("status.routeLengthUnknown"),
       "error",
     );
     return;
   }
 
   if (segmentEndKm <= segmentStartKm) {
-    const remainingKm = Math.max(0, routeTotalKm - currentKm);
+    const remainingKm = Math.max(0, routeTotalKm - referenceKm);
     setStatus(
       "sniper-status",
-      `Das gewählte Kilometerfenster liegt außerhalb der Strecke. Aktuell km ${currentKm.toFixed(1)} von ${routeTotalKm.toFixed(1)} (Rest: ${remainingKm.toFixed(1)} km).`,
+      t("status.windowOutside", {
+        mode: modeLabel,
+        ref: referenceKm.toFixed(1),
+        total: routeTotalKm.toFixed(1),
+        rest: remainingKm.toFixed(1),
+      }),
       "error",
     );
     return;
@@ -612,7 +1212,11 @@ async function handleSniperClick() {
   showMapBtn.disabled = true;
   setStatus(
     "sniper-status",
-    `Scanne Strecke von km ${segmentStartKm.toFixed(1)} bis ${segmentEndKm.toFixed(1)} …`,
+    t("status.scanning", {
+      mode: modeLabel,
+      start: segmentStartKm.toFixed(1),
+      end: segmentEndKm.toFixed(1),
+    }),
     "info",
   );
 
@@ -627,7 +1231,7 @@ async function handleSniperClick() {
     if (!segmentPoints.length) {
       setStatus(
         "sniper-status",
-        "Keine Punkte im gewählten Abschnitt gefunden.",
+        t("status.noSegmentPoints"),
         "error",
       );
       sniperBtn.disabled = false;
@@ -646,7 +1250,7 @@ async function handleSniperClick() {
           ...poi,
           kmOnRoute: nearest.kmOnRoute,
           distanceToRouteKm: nearest.distanceToRouteKm,
-          distanceAheadKm: nearest.kmOnRoute - currentKm,
+          distanceAheadKm: nearest.kmOnRoute - referenceKm,
         };
       })
       .filter(
@@ -661,21 +1265,27 @@ async function handleSniperClick() {
 
     lastScanResults = filtered;
     lastScanSegmentPoints = segmentPoints;
-    lastScanRange = { startKmAhead, endKmAhead, corridorWidthKm };
+    lastScanRange = {
+      startKmAhead,
+      endKmAhead,
+      corridorWidthKm,
+      mode: activeRangeMode,
+      referenceKm,
+    };
 
     renderPoiList(filtered);
 
     if (!filtered.length) {
       setStatus(
         "sniper-status",
-        "Keine passenden POIs im gewählten Korridor gefunden.",
+        t("status.noPois"),
         "info",
       );
       showMapBtn.disabled = true;
     } else {
       setStatus(
         "sniper-status",
-        `${filtered.length} Orte im Korridor gefunden.`,
+        t("status.poisFound", { count: filtered.length }),
         "info",
       );
       showMapBtn.disabled = false;
@@ -684,7 +1294,7 @@ async function handleSniperClick() {
     console.error(err);
     setStatus(
       "sniper-status",
-      "Fehler beim Laden der POIs (Overpass). Später erneut versuchen.",
+      t("status.poiLoadError"),
       "error",
     );
   } finally {
@@ -777,16 +1387,16 @@ async function fetchOverpassPois(bbox) {
           : tags.tourism === "motel"
           ? "Motel"
           : tags.amenity === "fuel"
-          ? "Tankstelle"
+          ? t("poi.fuel")
           : tags.amenity === "shelter"
-          ? "Shelter"
+          ? t("poi.shelter")
           : tags.tourism === "alpine_hut"
           ? "Alpine Hut"
-          : "POI");
+          : t("poi.other"));
 
       // Kategorien für Filter
       let category = "other";
-      let typeLabel = "POI";
+      let typeKey = "poi.other";
 
       if (
         tags.tourism === "hotel" ||
@@ -796,38 +1406,38 @@ async function fetchOverpassPois(bbox) {
         tags.tourism === "apartment"
       ) {
         category = "lodging";
-        typeLabel = "Unterkunft";
+        typeKey = "poi.lodging";
       } else if (tags.amenity === "fuel") {
         category = "fuel";
-        typeLabel = "Tankstelle";
+        typeKey = "poi.fuel";
       } else if (
         tags.shop === "supermarket" ||
         tags.shop === "convenience" ||
         tags.shop === "grocery"
       ) {
         category = "grocery";
-        typeLabel = "Shop";
+        typeKey = "poi.grocery";
       } else if (tags.amenity === "restaurant") {
         category = "restaurant";
-        typeLabel = "Restaurant";
+        typeKey = "poi.restaurant";
       } else if (tags.amenity === "cafe" || tags.shop === "bakery") {
         category = "cafe";
-        typeLabel = "Cafe/Baeckerei";
+        typeKey = "poi.cafe";
       } else if (tags.amenity === "fast_food") {
         category = "fastfood";
-        typeLabel = "Fast Food";
+        typeKey = "poi.fastfood";
       } else if (
         tags.amenity === "drinking_water" ||
         tags.amenity === "fountain"
       ) {
         category = "water";
-        typeLabel = "Trinkwasser";
+        typeKey = "poi.water";
       } else if (
         tags.tourism === "camp_site" ||
         tags.tourism === "caravan_site"
       ) {
         category = "camping";
-        typeLabel = "Camping";
+        typeKey = "poi.camping";
       } else if (
         tags.amenity === "shelter" ||
         tags.tourism === "alpine_hut" ||
@@ -835,7 +1445,7 @@ async function fetchOverpassPois(bbox) {
         tags.amenity === "hut"
       ) {
         category = "shelter";
-        typeLabel = "Shelter";
+        typeKey = "poi.shelter";
       }
 
       const phone = tags.phone || tags["contact:phone"] || null;
@@ -845,11 +1455,84 @@ async function fetchOverpassPois(bbox) {
         lat: el.lat,
         lon: el.lon,
         name,
-        type: typeLabel,
+        typeKey,
         category,
         phone,
       };
     });
+}
+
+function buildNavigationTargets(poi) {
+  const lat = Number(poi.lat);
+  const lon = Number(poi.lon);
+  const encodedName = encodeURIComponent(poi.name || "POI");
+  const encodedCoords = encodeURIComponent(`${lon},${lat}`);
+
+  return {
+    system: {
+      primary: `geo:${lat},${lon}?q=${lat},${lon}(${encodedName})`,
+    },
+    google: {
+      primary: `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`,
+    },
+    apple: {
+      primary: `https://maps.apple.com/?daddr=${lat},${lon}`,
+    },
+    mapy: {
+      primary: `mapycz://map?x=${lon}&y=${lat}&z=15&source=coor&id=${encodedCoords}`,
+      fallback: `https://mapy.com/turisticka?x=${lon}&y=${lat}&z=15&source=coor&id=${encodedCoords}`,
+    },
+  };
+}
+
+function openWithFallback(primaryUrl, fallbackUrl) {
+  let fallbackTimer = null;
+  const cancelFallback = () => {
+    if (fallbackTimer) {
+      clearTimeout(fallbackTimer);
+      fallbackTimer = null;
+    }
+    document.removeEventListener("visibilitychange", cancelFallback);
+  };
+
+  document.addEventListener("visibilitychange", cancelFallback, {
+    once: true,
+  });
+  window.location.href = primaryUrl;
+  fallbackTimer = window.setTimeout(() => {
+    if (document.visibilityState === "visible") {
+      window.open(fallbackUrl, "_blank", "noopener,noreferrer");
+    }
+    cancelFallback();
+  }, 700);
+}
+
+function openNavigationForPoi(poi) {
+  const app = currentNavApp || "system";
+  const targets = buildNavigationTargets(poi);
+  const target = targets[app] || targets.system;
+  if (app === "mapy" && target.fallback) {
+    openWithFallback(target.primary, target.fallback);
+    return;
+  }
+  window.location.href = target.primary;
+}
+
+function handlePoiActionClick(event) {
+  const actionEl = event.target.closest("[data-poi-action]");
+  if (!actionEl) return;
+
+  const action = actionEl.getAttribute("data-poi-action");
+  const poiKey = actionEl.getAttribute("data-poi-key");
+  if (!action || !poiKey) return;
+
+  const poi = mapPoiDataByKey.get(poiKey);
+  if (!poi) return;
+
+  if (action === "navigate") {
+    event.preventDefault();
+    openNavigationForPoi(poi);
+  }
 }
 
 function renderPoiList(pois) {
@@ -873,7 +1556,7 @@ function renderPoiList(pois) {
 
     const typeSpan = document.createElement("span");
     typeSpan.className = "poi-type";
-    typeSpan.textContent = poi.type;
+    typeSpan.textContent = t(poi.typeKey || `poi.${poi.category}` || "poi.other");
 
     mainLine.appendChild(distanceSpan);
     mainLine.appendChild(nameSpan);
@@ -885,34 +1568,31 @@ function renderPoiList(pois) {
     const callLink = document.createElement("a");
     const callBtn = document.createElement("button");
     callBtn.className = "btn secondary poi-action-btn";
-    callBtn.textContent = "Anrufen";
+    callBtn.textContent = t("poi.call");
 
+    let callAction = null;
     if (poi.phone) {
       callLink.href = `tel:${poi.phone.replace(/\s+/g, "")}`;
-    } else {
-      callLink.href = "tel:";
-      callBtn.style.opacity = "0.5";
+      callLink.appendChild(callBtn);
+      callAction = callLink;
     }
 
-    callLink.appendChild(callBtn);
-
-    const mapsLink = document.createElement("a");
     const mapsBtn = document.createElement("button");
     mapsBtn.className = "btn primary poi-action-btn";
-    mapsBtn.textContent = "In Maps öffnen";
-    const label = encodeURIComponent(poi.name);
-    mapsLink.href = `geo:${poi.lat},${poi.lon}?q=${poi.lat},${poi.lon}(${label})`;
-
-    mapsLink.appendChild(mapsBtn);
+    mapsBtn.textContent = t("poi.openMaps");
+    mapsBtn.type = "button";
+    mapsBtn.addEventListener("click", () => openNavigationForPoi(poi));
 
     const mapViewBtn = document.createElement("button");
     mapViewBtn.className = "btn secondary poi-action-btn";
-    mapViewBtn.textContent = "Auf Karte";
+    mapViewBtn.textContent = t("poi.onMap");
     mapViewBtn.addEventListener("click", () => showPoiOnMapFromList(poi));
 
-    actions.appendChild(callLink);
-    actions.appendChild(mapsLink);
+    actions.appendChild(mapsBtn);
     actions.appendChild(mapViewBtn);
+    if (callAction) {
+      actions.appendChild(callAction);
+    }
 
     li.appendChild(mainLine);
     li.appendChild(actions);
@@ -935,7 +1615,7 @@ function handleShowMapClick() {
   if (!lastScanResults.length || !lastScanSegmentPoints.length) {
     setStatus(
       "sniper-status",
-      "Keine Scan-Daten vorhanden. Bitte zuerst einen POI-Scan starten.",
+      t("status.mapNoScan"),
       "error",
     );
     return;
@@ -944,7 +1624,7 @@ function handleShowMapClick() {
   if (typeof L === "undefined") {
     setStatus(
       "sniper-status",
-      "Karte konnte nicht geladen werden (Leaflet nicht verfügbar).",
+      t("status.mapUnavailable"),
       "error",
     );
     return;
@@ -958,7 +1638,7 @@ function showPoiOnMapFromList(poi) {
   if (!lastScanResults.length || !lastScanSegmentPoints.length) {
     setStatus(
       "sniper-status",
-      "Bitte zuerst einen POI-Scan starten.",
+      t("status.mapNeedScan"),
       "error",
     );
     return;
@@ -995,6 +1675,7 @@ function renderMapForLastScan() {
   if (mapPoiLayer) mapInstance.removeLayer(mapPoiLayer);
   if (mapStartEndLayer) mapInstance.removeLayer(mapStartEndLayer);
   mapPoiMarkerByKey = new Map();
+  mapPoiDataByKey = new Map();
 
   const routeLatLngs = getRenderableRouteLatLngs();
   mapRouteCasingLayer = L.polyline(routeLatLngs, {
@@ -1018,14 +1699,14 @@ function renderMapForLastScan() {
       fillColor: "#22c55e",
       fillOpacity: 1,
       weight: 2,
-    }).bindTooltip("Start Suchfenster"),
+    }).bindTooltip(t("map.startTooltip")),
     L.circleMarker(end, {
       radius: 7,
       color: "#ef4444",
       fillColor: "#ef4444",
       fillOpacity: 1,
       weight: 2,
-    }).bindTooltip("Ende Suchfenster"),
+    }).bindTooltip(t("map.endTooltip")),
   ]).addTo(mapInstance);
 
   mapPoiLayer = L.layerGroup();
@@ -1045,6 +1726,7 @@ function renderMapForLastScan() {
       closeButton: true,
     });
     mapPoiMarkerByKey.set(poiKey, marker);
+    mapPoiDataByKey.set(poiKey, poi);
     mapPoiLayer.addLayer(marker);
   });
   mapPoiLayer.addTo(mapInstance);
@@ -1070,7 +1752,11 @@ function renderMapForLastScan() {
     mapInstance.setView(routeLatLngs[0], 12);
   }
   setMapStatus(
-    `Basemap: ${currentTileProviderName} | Routepunkte: ${routeLatLngs.length} | POIs: ${lastScanResults.length}`,
+    t("status.mapScanMeta", {
+      provider: currentTileProviderName,
+      routePoints: routeLatLngs.length,
+      poiCount: lastScanResults.length,
+    }),
   );
 
   // Desktop-Browser reagieren teils träge nach Overlay-Wechsel.
@@ -1080,7 +1766,16 @@ function renderMapForLastScan() {
   });
 
   if (mapTitle && lastScanRange) {
-    mapTitle.textContent = `Korridor ${lastScanRange.startKmAhead}-${lastScanRange.endKmAhead} km | Breite ${lastScanRange.corridorWidthKm} km`;
+    const modeText =
+      lastScanRange.mode === "live"
+        ? t("map.modeLive", { ref: lastScanRange.referenceKm.toFixed(1) })
+        : t("map.modePlan");
+    mapTitle.textContent = t("map.scanWindowTitle", {
+      mode: modeText,
+      start: lastScanRange.startKmAhead,
+      end: lastScanRange.endKmAhead,
+      corridor: lastScanRange.corridorWidthKm,
+    });
   }
 }
 
@@ -1106,19 +1801,26 @@ function addOrUpdateMapLegend() {
   mapLegendControl = L.control({ position: "bottomright" });
   mapLegendControl.onAdd = () => {
     const div = L.DomUtil.create("div", "map-legend");
-    const items = [
-      ["Route", "#22c55e"],
-      ["Unbefestigt", UNPAVED_SURFACE_COLOR],
-      ["Unterkunft", POI_CATEGORY_COLORS.lodging],
-      ["Tankstelle", POI_CATEGORY_COLORS.fuel],
-      ["Shop", POI_CATEGORY_COLORS.grocery],
-      ["Restaurant", POI_CATEGORY_COLORS.restaurant],
-      ["Cafe/Baeckerei", POI_CATEGORY_COLORS.cafe],
-      ["Fast Food", POI_CATEGORY_COLORS.fastfood],
-      ["Wasser", POI_CATEGORY_COLORS.water],
-      ["Camping", POI_CATEGORY_COLORS.camping],
-      ["Shelter", POI_CATEGORY_COLORS.shelter],
+    const items = [[t("map.legendRoute"), "#22c55e"]];
+    if (showUnpavedOverlay) {
+      items.push([t("map.legendUnpaved"), UNPAVED_SURFACE_COLOR]);
+    }
+    const categoryLegend = [
+      ["lodging", t("map.legendLodging"), POI_CATEGORY_COLORS.lodging],
+      ["fuel", t("map.legendFuel"), POI_CATEGORY_COLORS.fuel],
+      ["grocery", t("map.legendGrocery"), POI_CATEGORY_COLORS.grocery],
+      ["restaurant", t("map.legendRestaurant"), POI_CATEGORY_COLORS.restaurant],
+      ["cafe", t("map.legendCafe"), POI_CATEGORY_COLORS.cafe],
+      ["fastfood", t("map.legendFastfood"), POI_CATEGORY_COLORS.fastfood],
+      ["water", t("map.legendWater"), POI_CATEGORY_COLORS.water],
+      ["camping", t("map.legendCamping"), POI_CATEGORY_COLORS.camping],
+      ["shelter", t("map.legendShelter"), POI_CATEGORY_COLORS.shelter],
     ];
+    categoryLegend.forEach(([key, label, color]) => {
+      if (activePoiFilters.has(key)) {
+        items.push([label, color]);
+      }
+    });
 
     div.innerHTML = items
       .map(
@@ -1144,14 +1846,19 @@ async function updateUnpavedOverlay(routeLatLngs) {
     drawUnpavedOverlay(cached.polylines);
     if (cached.km > 0) {
       setMapStatus(
-        `Basemap: ${currentTileProviderName} | Unbefestigt ~${cached.km.toFixed(1)} km`,
+        t("status.mapUnpavedKm", {
+          provider: currentTileProviderName,
+          km: cached.km.toFixed(1),
+        }),
       );
     }
     return;
   }
 
   const token = ++surfaceAnalysisToken;
-  setMapStatus(`Basemap: ${currentTileProviderName} | analysiere Untergrund ...`);
+  setMapStatus(
+    t("status.mapUnpavedAnalyzing", { provider: currentTileProviderName }),
+  );
 
   try {
     const ways = await fetchSurfaceWays(routeLatLngs);
@@ -1167,13 +1874,16 @@ async function updateUnpavedOverlay(routeLatLngs) {
     drawUnpavedOverlay(unpavedPolylines);
 
     setMapStatus(
-      `Basemap: ${currentTileProviderName} | Unbefestigt ~${unpavedKm.toFixed(1)} km`,
+      t("status.mapUnpavedKm", {
+        provider: currentTileProviderName,
+        km: unpavedKm.toFixed(1),
+      }),
     );
   } catch (err) {
     if (token !== surfaceAnalysisToken) return;
     console.warn("Surface analysis failed", err);
     setMapStatus(
-      `Basemap: ${currentTileProviderName} | Untergrund-Analyse nicht verfügbar`,
+      t("status.mapUnpavedUnavailable", { provider: currentTileProviderName }),
     );
   }
 }
@@ -1201,7 +1911,9 @@ function applyUnpavedVisibility() {
   if (!mapInstance) return;
   if (!mapUnpavedLayer) {
     if (!showUnpavedOverlay) {
-      setMapStatus(`Basemap: ${currentTileProviderName} | Unbefestigt ausgeblendet`);
+      setMapStatus(
+        t("status.mapUnpavedOff", { provider: currentTileProviderName }),
+      );
     }
     return;
   }
@@ -1210,17 +1922,22 @@ function applyUnpavedVisibility() {
     if (!mapInstance.hasLayer(mapUnpavedLayer)) {
       mapUnpavedLayer.addTo(mapInstance);
     }
-    setMapStatus(`Basemap: ${currentTileProviderName} | Unbefestigt eingeblendet`);
+    setMapStatus(
+      t("status.mapUnpavedOn", { provider: currentTileProviderName }),
+    );
   } else if (mapInstance.hasLayer(mapUnpavedLayer)) {
     mapInstance.removeLayer(mapUnpavedLayer);
-    setMapStatus(`Basemap: ${currentTileProviderName} | Unbefestigt ausgeblendet`);
+    setMapStatus(
+      t("status.mapUnpavedOff", { provider: currentTileProviderName }),
+    );
   }
+  addOrUpdateMapLegend();
 }
 
 function getSurfaceCacheKey(routeLatLngs) {
   const first = routeLatLngs[0];
   const last = routeLatLngs[routeLatLngs.length - 1];
-  return `${routeLatLngs.length}|${first[0].toFixed(4)},${first[1].toFixed(4)}|${last[0].toFixed(4)},${last[1].toFixed(4)}`;
+  return `${activeUnpavedMode}|${routeLatLngs.length}|${first[0].toFixed(4)},${first[1].toFixed(4)}|${last[0].toFixed(4)},${last[1].toFixed(4)}`;
 }
 
 async function fetchSurfaceWays(routeLatLngs) {
@@ -1290,7 +2007,8 @@ function detectUnpavedPolylines(routeLatLngs, ways) {
     polylines.push(current);
   }
 
-  return polylines;
+  const { minSegmentKm } = getUnpavedModeConfig();
+  return polylines.filter((line) => estimateLineKm(line) >= minSegmentKm);
 }
 
 function buildWayVertexIndex(ways) {
@@ -1298,7 +2016,9 @@ function buildWayVertexIndex(ways) {
   const cellSize = 0.02;
 
   ways.forEach((way) => {
-    const unpaved = isUnpavedWay(way.tags || {});
+    const tags = way.tags || {};
+    if (!isWayRelevantForUnpaved(tags)) return;
+    const unpaved = isUnpavedWay(tags);
     if (!unpaved) return;
 
     way.geometry.forEach((pt) => {
@@ -1309,6 +2029,31 @@ function buildWayVertexIndex(ways) {
   });
 
   return index;
+}
+
+function isWayRelevantForUnpaved(tags) {
+  const highway = (tags.highway || "").toLowerCase();
+  const bicycle = (tags.bicycle || "").toLowerCase();
+  const access = (tags.access || "").toLowerCase();
+
+  if (!highway) return false;
+  if (NON_RIDEABLE_HIGHWAYS.has(highway)) return false;
+
+  // In conservative mode we ignore generic paths unless explicitly bike-allowed.
+  if (
+    activeUnpavedMode === "conservative" &&
+    highway === "path" &&
+    !BIKE_OK_VALUES.has(bicycle)
+  ) {
+    return false;
+  }
+
+  // Ignore access-restricted ways unless bike access is explicitly granted.
+  if (access === "no" && !BIKE_OK_VALUES.has(bicycle)) {
+    return false;
+  }
+
+  return true;
 }
 
 function isNearUnpavedWay(lat, lon, index) {
@@ -1334,22 +2079,45 @@ function isNearUnpavedWay(lat, lon, index) {
     if (d < best) best = d;
   }
 
-  // 120 m proximity threshold
-  return best <= 0.12;
+  const { proximityThresholdKm } = getUnpavedModeConfig();
+  return best <= proximityThresholdKm;
 }
 
 function isUnpavedWay(tags) {
   const surface = (tags.surface || "").toLowerCase();
   const tracktype = (tags.tracktype || "").toLowerCase();
   const highway = (tags.highway || "").toLowerCase();
+  const smoothness = (tags.smoothness || "").toLowerCase();
+
+  if (surface && PAVED_SURFACES.has(surface)) {
+    return false;
+  }
 
   if (surface && UNPAVED_SURFACES.has(surface)) {
+    if (surface === "compacted" && !getUnpavedModeConfig().includeCompacted) {
+      return false;
+    }
     return true;
   }
-  if (tracktype && ["grade3", "grade4", "grade5"].includes(tracktype)) {
+  if (
+    tracktype &&
+    (UNPAVED_TRACKTYPES.has(tracktype) ||
+      (tracktype === "grade3" && getUnpavedModeConfig().includeGrade3))
+  ) {
     return true;
   }
-  if (highway === "track" && !surface) {
+  // Conservative fallback: only trust track without surface when tags strongly imply rough ground.
+  if (
+    highway === "track" &&
+    !surface &&
+    (
+      getUnpavedModeConfig().allowTrackWithoutSurface ||
+      tracktype === "grade5" ||
+      smoothness === "very_bad" ||
+      smoothness === "horrible" ||
+      smoothness === "very_horrible"
+    )
+  ) {
     return true;
   }
   return false;
@@ -1379,23 +2147,32 @@ function computeLatLngBoundingBox(latLngs, padDeg = 0) {
 function estimatePolylineKm(polylines) {
   let totalKm = 0;
   polylines.forEach((line) => {
-    for (let i = 1; i < line.length; i += 1) {
-      totalKm += haversineKm(
-        line[i - 1][0],
-        line[i - 1][1],
-        line[i][0],
-        line[i][1],
-      );
-    }
+    totalKm += estimateLineKm(line);
   });
   return totalKm;
+}
+
+function estimateLineKm(line) {
+  let km = 0;
+  for (let i = 1; i < line.length; i += 1) {
+    km += haversineKm(
+      line[i - 1][0],
+      line[i - 1][1],
+      line[i][0],
+      line[i][1],
+    );
+  }
+  return km;
 }
 
 function attachTileErrorHandling(layer) {
   layer.on("tileerror", () => {
     tileErrorCount += 1;
     setMapStatus(
-      `Basemap: ${currentTileProviderName} | Tile-Fehler: ${tileErrorCount}`,
+      t("status.mapTileErrors", {
+        provider: currentTileProviderName,
+        count: tileErrorCount,
+      }),
     );
 
     if (tileErrorCount >= 8 && !hasSwitchedTileProvider) {
@@ -1405,21 +2182,21 @@ function attachTileErrorHandling(layer) {
         : "OpenStreetMap";
       switchToTileProvider(fallbackName);
       setMapStatus(
-        "Basemap gewechselt (Tile-Fehler). Bitte Netz/CSP prüfen.",
+        t("status.mapTileSwitched"),
       );
       return;
     }
 
     if (tileErrorCount >= 16) {
       setMapStatus(
-        "Karten-Tiles blockiert. Externe Domains im Hosting prüfen.",
+        t("status.mapTileBlocked"),
       );
     }
   });
 
   layer.on("load", () => {
     setMapStatus(
-      `Basemap: ${currentTileProviderName} | Tiles geladen`,
+      t("status.mapTilesLoaded", { provider: currentTileProviderName }),
     );
   });
 }
@@ -1441,16 +2218,23 @@ function setMapStatus(text) {
 
 function buildPoiPopupHtml(poi) {
   const escapedName = escapeHtml(poi.name || "POI");
-  const escapedType = escapeHtml(poi.type || "POI");
-  const distanceText = `${poi.distanceAheadKm.toFixed(1)} km voraus`;
+  const escapedType = escapeHtml(
+    t(poi.typeKey || `poi.${poi.category}` || "poi.other"),
+  );
+  const poiKey = getPoiKey(poi);
+  const distanceText = t("poi.popupDistance", {
+    distance: poi.distanceAheadKm.toFixed(1),
+  });
   const callLink = poi.phone
-    ? `<a class="popup-link" href="tel:${poi.phone.replace(/\s+/g, "")}">Anrufen</a>`
-    : '<span class="popup-link" style="opacity:0.5;">Keine Nummer</span>';
+    ? `<a class="popup-link" href="tel:${poi.phone.replace(/\s+/g, "")}">${t("poi.call")}</a>`
+    : "";
+  const navigateLink = `<a class="popup-link" href="#" data-poi-action="navigate" data-poi-key="${escapeHtml(poiKey)}">${t("poi.navigate")}</a>`;
 
   return `
     <p class="popup-title">${escapedName}</p>
     <p class="popup-meta">${escapedType} · ${distanceText}</p>
     ${callLink}
+    ${navigateLink}
   `;
 }
 

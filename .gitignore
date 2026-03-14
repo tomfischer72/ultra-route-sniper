@@ -1,0 +1,12 @@
+.DS_Store
+Thumbs.db
+
+# local editor and tooling
+.cursor/
+.vscode/
+.idea/
+
+# archives or local exports
+*.zip
+*.tar
+*.tgz
