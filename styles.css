@@ -87,6 +87,12 @@ main {
   color: var(--text-muted);
 }
 
+.hint.compact {
+  margin-top: -0.2rem;
+  margin-bottom: 0.55rem;
+  font-size: 0.82rem;
+}
+
 .btn {
   width: 100%;
   border-radius: 999px;
@@ -209,6 +215,13 @@ main {
 
 .range-row input#corridor-width {
   width: 30%;
+}
+
+.range-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
 }
 
 .poi-filters {

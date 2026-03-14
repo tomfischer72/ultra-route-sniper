@@ -69,6 +69,17 @@
           <p class="hint">
             Scannt die nächsten Kilometer entlang der Route nach Unterkünften, Tankstellen &amp; Versorgungsstellen.
           </p>
+          <div class="range-mode" aria-label="Suchmodus">
+            <button class="chip active" data-range-mode="plan">
+              Planung (ab km 0)
+            </button>
+            <button class="chip" data-range-mode="live">
+              Unterwegs (ab jetzt)
+            </button>
+          </div>
+          <p id="range-mode-hint" class="hint compact">
+            Planung: Suchfenster relativ zum Routenstart.
+          </p>
           <label class="range-label">
             Nächste Kilometer entlang der Route:
             <div class="range-row">

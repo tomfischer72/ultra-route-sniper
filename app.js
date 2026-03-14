@@ -15,6 +15,10 @@ const DEFAULT_POI_FILTERS = [
   "camping",
   "shelter",
 ];
+const DEFAULT_RANGE_BY_MODE = {
+  plan: { startKm: 50, endKm: 120 },
+  live: { startKm: 80, endKm: 120 },
+};
 
 let db;
 let routePoints = []; // { lat, lon, cumDistKm }
@@ -40,6 +44,7 @@ let hasSwitchedTileProvider = false;
 let surfaceAnalysisToken = 0;
 const surfaceOverlayCache = new Map();
 let showUnpavedOverlay = true;
+let activeRangeMode = "plan"; // plan | live
 
 const POI_CATEGORY_COLORS = {
   lodging: "#3b82f6",
@@ -114,6 +119,7 @@ function initUI() {
   const backToListBtn = document.getElementById("back-to-list-btn");
   const unpavedToggle = document.getElementById("unpaved-toggle");
   const filterContainer = document.querySelector(".poi-filters");
+  const rangeModeContainer = document.querySelector(".range-mode");
 
   gpxInput.addEventListener("change", handleGpxFileSelect);
   useStoredBtn.addEventListener("click", async () => {
@@ -140,6 +146,10 @@ function initUI() {
   if (filterContainer) {
     filterContainer.addEventListener("click", handleFilterClick);
   }
+  if (rangeModeContainer) {
+    rangeModeContainer.addEventListener("click", handleRangeModeClick);
+  }
+  applyRangeModeUI(false);
 }
 
 // ---------- STATUS HELPERS ----------
@@ -158,7 +168,7 @@ function updateSniperButtonState() {
   const sniperBtn = document.getElementById("sniper-btn");
   if (!sniperBtn) return;
   const hasRoute = routePoints && routePoints.length > 0;
-  const hasPosition = !!lastRouteMatch;
+  const hasPosition = activeRangeMode === "live" ? !!lastRouteMatch : true;
   const hasFilters = activePoiFilters.size > 0;
   sniperBtn.disabled = !(hasRoute && hasPosition && hasFilters);
 }
@@ -187,6 +197,51 @@ function handleFilterClick(event) {
   // Bereits gescannte Ergebnisse sind nach Filterwechsel ggf. veraltet.
   document.getElementById("show-map-btn").disabled = true;
   updateSniperButtonState();
+}
+
+function handleRangeModeClick(event) {
+  const target = event.target;
+  if (!target.matches(".chip[data-range-mode]")) return;
+
+  const mode = target.getAttribute("data-range-mode");
+  if (!mode || (mode !== "plan" && mode !== "live")) return;
+  if (mode === activeRangeMode) return;
+
+  activeRangeMode = mode;
+  applyRangeModeUI(true);
+  lastScanResults = [];
+  lastScanSegmentPoints = [];
+  lastScanRange = null;
+  const showMapBtn = document.getElementById("show-map-btn");
+  if (showMapBtn) showMapBtn.disabled = true;
+  setStatus("sniper-status", "Suchmodus gewechselt. Bitte POI-Scan neu starten.", "info");
+  updateSniperButtonState();
+}
+
+function applyRangeModeUI(applyDefaults) {
+  const chips = document.querySelectorAll(".chip[data-range-mode]");
+  chips.forEach((chip) => {
+    chip.classList.toggle(
+      "active",
+      chip.getAttribute("data-range-mode") === activeRangeMode,
+    );
+  });
+
+  const hint = document.getElementById("range-mode-hint");
+  if (hint) {
+    hint.textContent =
+      activeRangeMode === "live"
+        ? "Unterwegs: Suchfenster relativ zur aktuellen Position auf der Route."
+        : "Planung: Suchfenster relativ zum Routenstart.";
+  }
+
+  if (applyDefaults) {
+    const startInput = document.getElementById("range-start");
+    const endInput = document.getElementById("range-end");
+    const defaults = DEFAULT_RANGE_BY_MODE[activeRangeMode];
+    if (startInput) startInput.value = String(defaults.startKm);
+    if (endInput) endInput.value = String(defaults.endKm);
+  }
 }
 
 function getCorridorWidthKm() {
@@ -545,7 +600,7 @@ function updateRoutePosition(lat, lon) {
 // ---------- SNIPER MODE (POI SCAN) ----------
 
 async function handleSniperClick() {
-  if (!lastRouteMatch || !lastGeoPosition) {
+  if (activeRangeMode === "live" && (!lastRouteMatch || !lastGeoPosition)) {
     setStatus(
       "sniper-status",
       "Keine aktuelle Position auf der Route bekannt. Bitte zuerst Ortung starten.",
@@ -580,14 +635,17 @@ async function handleSniperClick() {
     return;
   }
 
-  const currentKm = lastRouteMatch.kmOnRoute || 0;
   const routeTotalKm =
     routePoints && routePoints.length
       ? routePoints[routePoints.length - 1].cumDistKm
       : 0;
+  const referenceKm =
+    activeRangeMode === "live" ? lastRouteMatch.kmOnRoute || 0 : 0;
+  const modeLabel =
+    activeRangeMode === "live" ? "ab aktueller Position" : "ab km 0";
 
-  const segmentStartKm = currentKm + startKmAhead;
-  const segmentEndKm = Math.min(currentKm + endKmAhead, routeTotalKm);
+  const segmentStartKm = referenceKm + startKmAhead;
+  const segmentEndKm = Math.min(referenceKm + endKmAhead, routeTotalKm);
 
   if (!routeTotalKm) {
     setStatus(
@@ -599,10 +657,10 @@ async function handleSniperClick() {
   }
 
   if (segmentEndKm <= segmentStartKm) {
-    const remainingKm = Math.max(0, routeTotalKm - currentKm);
+    const remainingKm = Math.max(0, routeTotalKm - referenceKm);
     setStatus(
       "sniper-status",
-      `Das gewählte Kilometerfenster liegt außerhalb der Strecke. Aktuell km ${currentKm.toFixed(1)} von ${routeTotalKm.toFixed(1)} (Rest: ${remainingKm.toFixed(1)} km).`,
+      `Fenster außerhalb der Strecke (${modeLabel}). Referenz km ${referenceKm.toFixed(1)} von ${routeTotalKm.toFixed(1)} (Rest: ${remainingKm.toFixed(1)} km).`,
       "error",
     );
     return;
@@ -612,7 +670,7 @@ async function handleSniperClick() {
   showMapBtn.disabled = true;
   setStatus(
     "sniper-status",
-    `Scanne Strecke von km ${segmentStartKm.toFixed(1)} bis ${segmentEndKm.toFixed(1)} …`,
+    `Scanne ${modeLabel}: km ${segmentStartKm.toFixed(1)} bis ${segmentEndKm.toFixed(1)} …`,
     "info",
   );
 
@@ -646,7 +704,7 @@ async function handleSniperClick() {
           ...poi,
           kmOnRoute: nearest.kmOnRoute,
           distanceToRouteKm: nearest.distanceToRouteKm,
-          distanceAheadKm: nearest.kmOnRoute - currentKm,
+          distanceAheadKm: nearest.kmOnRoute - referenceKm,
         };
       })
       .filter(
@@ -661,7 +719,13 @@ async function handleSniperClick() {
 
     lastScanResults = filtered;
     lastScanSegmentPoints = segmentPoints;
-    lastScanRange = { startKmAhead, endKmAhead, corridorWidthKm };
+    lastScanRange = {
+      startKmAhead,
+      endKmAhead,
+      corridorWidthKm,
+      mode: activeRangeMode,
+      referenceKm,
+    };
 
     renderPoiList(filtered);
 
@@ -1080,7 +1144,11 @@ function renderMapForLastScan() {
   });
 
   if (mapTitle && lastScanRange) {
-    mapTitle.textContent = `Korridor ${lastScanRange.startKmAhead}-${lastScanRange.endKmAhead} km | Breite ${lastScanRange.corridorWidthKm} km`;
+    const modeText =
+      lastScanRange.mode === "live"
+        ? `Unterwegs ab km ${lastScanRange.referenceKm.toFixed(1)}`
+        : "Planung ab km 0";
+    mapTitle.textContent = `${modeText} | Fenster ${lastScanRange.startKmAhead}-${lastScanRange.endKmAhead} km | Breite ${lastScanRange.corridorWidthKm} km`;
   }
 }
 
