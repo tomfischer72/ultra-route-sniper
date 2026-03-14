@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Ultra Route Sniper</title>
+    <meta name="theme-color" content="#050509" />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="192x192"
+      href="icons/icon-192.png"
+    />
+    <link
+      rel="apple-touch-icon"
+      sizes="192x192"
+      href="icons/icon-192.png"
+    />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="app-header">
+        <h1>Ultra Route Sniper</h1>
+        <p class="subtitle">Offline PWA · GPX · Sniper-Mode</p>
+      </header>
+
+      <main>
+        <section class="card">
+          <h2>1. GPX-Strecke laden</h2>
+          <p class="hint">
+            Einmal deine Renn-GPX-Datei laden, dann bleibt sie lokal gespeichert
+            (offline nutzbar).
+          </p>
+          <label class="file-input-label">
+            <input id="gpx-file-input" type="file" accept=".gpx,application/gpx+xml" />
+            <span>Datei wählen</span>
+          </label>
+          <button id="use-stored-gpx-btn" class="btn secondary" disabled>
+            Gespeicherte Strecke nutzen
+          </button>
+          <div id="gpx-status" class="status-text"></div>
+        </section>
+
+        <section class="card">
+          <h2>2. Ortung</h2>
+          <p class="hint">
+            Großer Button = aktuelle Position bestimmen (HTML5 Geolocation).
+          </p>
+          <button id="locate-btn" class="btn primary big">
+            Ortung starten
+          </button>
+          <div id="location-status" class="status-text"></div>
+          <div id="route-position" class="status-text"></div>
+        </section>
+
+        <section class="card">
+          <h2>3. Sniper-Modus</h2>
+          <p class="hint">
+            Scannt die nächsten Kilometer entlang der Route nach Unterkünften, Tankstellen &amp; Versorgungsstellen.
+          </p>
+          <label class="range-label">
+            Nächste Kilometer entlang der Route:
+            <div class="range-row">
+              <input
+                id="range-start"
+                type="number"
+                min="0"
+                step="10"
+                value="50"
+                inputmode="numeric"
+              />
+              <span>bis</span>
+              <input
+                id="range-end"
+                type="number"
+                min="0"
+                step="10"
+                value="120"
+                inputmode="numeric"
+              />
+              <span>km</span>
+            </div>
+          </label>
+          <label class="range-label">
+            Korridorbreite seitlich der Route:
+            <div class="range-row">
+              <input
+                id="corridor-width"
+                type="number"
+                min="1"
+                max="10"
+                step="1"
+                value="2"
+                inputmode="numeric"
+              />
+              <span>km (1–10)</span>
+            </div>
+          </label>
+          <div class="poi-filters" aria-label="POI-Filter">
+            <button class="chip active" data-poi-filter="lodging">Unterkunft</button>
+            <button class="chip active" data-poi-filter="fuel">Tankstelle</button>
+            <button class="chip active" data-poi-filter="food">Lebensmittel</button>
+            <button class="chip active" data-poi-filter="water">Wasser</button>
+            <button class="chip active" data-poi-filter="camping">Camping</button>
+            <button class="chip active" data-poi-filter="shelter">Shelter</button>
+          </div>
+          <button id="sniper-btn" class="btn secondary big" disabled>
+            POI-Scan starten
+          </button>
+          <div id="sniper-status" class="status-text"></div>
+          <ul id="poi-list" class="poi-list"></ul>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js" type="module"></script>
+  </body>
+</html>
+
