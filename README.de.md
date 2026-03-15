@@ -89,8 +89,18 @@ Wichtig:
 - Standort wird nur auf ausdruecklichen Nutzerklick abgefragt.
 - Keine Benutzerkonten und keine serverseitige Profilverwaltung notwendig.
 - Rechtliche Hinweise fuer das Live-Deployment:
-  - Impressum: [routesniper.ch/impressum.html](https://routesniper.ch/impressum.html)
-  - Datenschutz: [routesniper.ch/datenschutz.html](https://routesniper.ch/datenschutz.html)
+  - Impressum: [`impressum.html`](impressum.html)
+  - Datenschutz: [`datenschutz.html`](datenschutz.html)
+  - Nutzungsbedingungen: [`nutzungsbedingungen.html`](nutzungsbedingungen.html)
+
+## Nutzungsbedingungen / Haftung
+
+- Die App ist ein kostenloses Hilfsmittel zur POI-Selektion entlang einer Route.
+- Die Nutzung erfolgt freiwillig und in voller Eigenverantwortung.
+- Entscheidungen im Rennbetrieb trifft immer die nutzende Person.
+- Es gibt keine Garantie auf Verfuegbarkeit, Aktualitaet oder Fehlerfreiheit.
+- Externe Datenquellen koennen fehlerhaft oder unvollstaendig sein.
+- Details: [`NUTZUNGSBEDINGUNGEN.md`](NUTZUNGSBEDINGUNGEN.md)
 
 ## Spenden
 

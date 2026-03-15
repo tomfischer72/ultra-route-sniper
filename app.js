@@ -152,7 +152,7 @@ const I18N = {
     "app.navAppApple": "Apple Karten",
     "app.footerBy": "Von Thomas Fischer (@bikepeopletom)",
     "app.footerTagline":
-      "Proudly built in Switzerland for the ultrarace community.",
+      "Proudly built in Switzerland for the ultracycling community.",
     "app.footerDonate": "Unterstuetzen",
     "upload.title": "1. GPX-Strecke laden",
     "upload.hint":
@@ -324,7 +324,7 @@ I18N.en = {
   "app.navAppApple": "Apple Maps",
   "app.footerBy": "By Thomas Fischer (@bikepeopletom)",
   "app.footerTagline":
-    "Proudly built in Switzerland for the ultrarace community.",
+    "Proudly built in Switzerland for the ultracycling community.",
   "app.footerDonate": "Donate",
   "upload.title": "1. Load GPX route",
   "upload.hint":

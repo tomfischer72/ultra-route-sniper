@@ -89,8 +89,18 @@ Required for location on real devices:
 - Location is requested only when the user taps location actions.
 - No user account or server-side profile is required.
 - Legal notice and privacy policy for the live deployment:
-  - Imprint: [routesniper.ch/impressum.html](https://routesniper.ch/impressum.html)
-  - Privacy: [routesniper.ch/datenschutz.html](https://routesniper.ch/datenschutz.html)
+  - Imprint: [`impressum.html`](impressum.html)
+  - Privacy: [`datenschutz.html`](datenschutz.html)
+  - Terms: [`nutzungsbedingungen.html`](nutzungsbedingungen.html)
+
+## Terms / Liability
+
+- The app is a free helper for fast POI selection along a route.
+- Usage is voluntary and fully at the user's own responsibility.
+- Operational decisions during racing are always made by the user.
+- No guarantee is provided for uptime, completeness, or error-free data.
+- External data sources can be incomplete or inaccurate.
+- Details: [`TERMS.md`](TERMS.md)
 
 ## Donations
 
