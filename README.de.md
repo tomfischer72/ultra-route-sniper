@@ -1,6 +1,6 @@
 # Ultra Route Sniper
 
-Maintainer: Tom Fischer (@bikepeopletom)
+Maintainer: Thomas Fischer (@bikepeopletom)
 Erstellt mit KI-Unterstuetzung (Cursor).
 
 Minimale, mobile-first Progressive Web App (PWA) fuer Unsupported Ultra-Cycling.

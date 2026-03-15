@@ -150,7 +150,7 @@ const I18N = {
     "app.navAppMapy": "Mapy",
     "app.navAppGoogle": "Google Maps",
     "app.navAppApple": "Apple Karten",
-    "app.footerBy": "Von Tom Fischer (@bikepeopletom)",
+    "app.footerBy": "Von Thomas Fischer (@bikepeopletom)",
     "app.footerTagline":
       "Proudly built in Switzerland for the ultrarace community.",
     "app.footerDonate": "Unterstuetzen",
@@ -322,7 +322,7 @@ I18N.en = {
   "app.navAppMapy": "Mapy",
   "app.navAppGoogle": "Google Maps",
   "app.navAppApple": "Apple Maps",
-  "app.footerBy": "By Tom Fischer (@bikepeopletom)",
+  "app.footerBy": "By Thomas Fischer (@bikepeopletom)",
   "app.footerTagline":
     "Proudly built in Switzerland for the ultrarace community.",
   "app.footerDonate": "Donate",
