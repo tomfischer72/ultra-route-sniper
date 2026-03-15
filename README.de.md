@@ -88,6 +88,9 @@ Wichtig:
 - GPX-Daten bleiben lokal im Browser (IndexedDB).
 - Standort wird nur auf ausdruecklichen Nutzerklick abgefragt.
 - Keine Benutzerkonten und keine serverseitige Profilverwaltung notwendig.
+- Rechtliche Hinweise fuer das Live-Deployment:
+  - Impressum: [routesniper.ch/impressum.html](https://routesniper.ch/impressum.html)
+  - Datenschutz: [routesniper.ch/datenschutz.html](https://routesniper.ch/datenschutz.html)
 
 ## Spenden
 
@@ -104,7 +107,7 @@ Lizenz: Apache-2.0. Siehe [`LICENSE`](LICENSE) und [`NOTICE`](NOTICE).
 
 ## Release-Flow
 
-- `main` bleibt die stabile Linie.
+- Der Default-Branch (`master`) bleibt die stabile Linie.
 - Neue Features in eigenen Branches entwickeln.
 - Releases per Semantic Versioning taggen, z. B. `v1.1.0`, `v1.1.1`.
 

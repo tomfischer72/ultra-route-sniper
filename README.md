@@ -88,6 +88,9 @@ Required for location on real devices:
 - GPX data is stored only in the local browser database (IndexedDB).
 - Location is requested only when the user taps location actions.
 - No user account or server-side profile is required.
+- Legal notice and privacy policy for the live deployment:
+  - Imprint: [routesniper.ch/impressum.html](https://routesniper.ch/impressum.html)
+  - Privacy: [routesniper.ch/datenschutz.html](https://routesniper.ch/datenschutz.html)
 
 ## Donations
 
@@ -104,7 +107,7 @@ Licensed under Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
 ## Release Flow
 
-- Keep `main` as stable line.
+- Keep the default branch (`master`) as the stable line.
 - Build new features on dedicated branches.
 - Tag releases using semantic versioning, e.g. `v1.1.0`, `v1.1.1`.
 
